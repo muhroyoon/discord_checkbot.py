@@ -241,7 +241,7 @@ async def update_stats_channels(bot):
     total_attendance = sum(u["total"] for u in data.values())
 
     # 오늘 출석
-    new_today_name = f"✅ 오늘 출석: {today_count}"
+    new_today_name = f"Today Check : {today_count}"
     if today_channel.name != new_today_name:
         try:
             await today_channel.edit(name=new_today_name)
@@ -249,7 +249,7 @@ async def update_stats_channels(bot):
             print(f"❌ 권한 부족: 오늘 출석 채널({today_channel.id}) 이름 변경 실패")
 
     # 총 누적 출석
-    new_total_name = f"📈 총 누적 출석: {total_attendance}"
+    new_total_name = f"Total Check : {total_attendance}"
     if total_channel.name != new_total_name:
         try:
             await total_channel.edit(name=new_total_name)
