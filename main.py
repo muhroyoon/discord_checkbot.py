@@ -192,8 +192,13 @@ async def daily_check():
 
 @bot.event
 async def on_ready():
-    guild = discord.Object(id=GUILD_ID)
-    await tree.sync(guild=guild)  # 즉시 적용
+    try:
+        guild = discord.Object(id=GUILD_ID)
+        synced = await tree.sync(guild=guild)
+        print(f"슬래시 명령어 {len(synced)}개 동기화 완료")
+    except Exception as e:
+        print("에러:", e)
+
     print(f"봇 로그인 완료: {bot.user}")
     daily_check.start()
 
