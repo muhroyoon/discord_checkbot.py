@@ -30,7 +30,7 @@ DATA_FILE = "attendance.json"
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True  # 멤버 조회 필수
+intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
@@ -96,35 +96,28 @@ class AttendanceView(discord.ui.View):
 
         user = data[user_id]
 
-        # 중복 체크
         if user["last_attendance"] == today:
             await interaction.response.send_message("⚠ 이미 출석했습니다!", ephemeral=True)
             return
 
-        # 스트릭 계산
+        # 연속 출석 계산
         yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-        if user["last_attendance"] == yesterday:
-            user["streak"] += 1
-        else:
-            user["streak"] = 1
+        user["streak"] = user["streak"] + 1 if user["last_attendance"] == yesterday else 1
 
         user["last_attendance"] = today
         user["total"] += 1
-
-        if month not in user["monthly"]:
-            user["monthly"][month] = 0
-        user["monthly"][month] += 1
+        user["monthly"][month] = user.get("monthly", {}).get(month, 0) + 1
 
         save_data(data)
 
         rank = get_rank(user_id, month)
         embed = create_embed(user, rank, month)
 
-        # 출석 완료 메시지 본인에게만
+        # ✅ 본인만 ephemeral 메시지
         await interaction.response.send_message("🎉 출석 완료!", embed=embed, ephemeral=True)
 
-        # 채널 이름 즉시 갱신
-        await update_stats_channels(bot)
+        # 채널 이름 갱신 (interaction과 분리)
+        asyncio.create_task(update_stats_channels(bot))
 
 # ===== 슬래시 명령어 =====
 @tree.command(name="출석패널", description="출석 버튼 생성")
@@ -182,7 +175,7 @@ async def stats(interaction: discord.Interaction):
 
     await interaction.response.send_message(embed=embed)
 
-# ===== 월간 랭킹 공지 (특정 역할) =====
+# ===== 월간 랭킹 공지 =====
 async def announce_last_month():
     guild = bot.get_guild(GUILD_ID)
     if guild is None:
