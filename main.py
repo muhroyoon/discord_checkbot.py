@@ -95,6 +95,7 @@ class AttendanceView(discord.ui.View):
             await interaction.response.send_message("⚠ 이미 출석했습니다!", ephemeral=True)
             return
 
+        # 연속 출석 계산
         yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
         user["streak"] = user["streak"] + 1 if user["last_attendance"] == yesterday else 1
         user["last_attendance"] = today
@@ -102,12 +103,14 @@ class AttendanceView(discord.ui.View):
         user["monthly"][month] = user.get("monthly", {}).get(month, 0) + 1
 
         save_data(data)
+
         rank = get_rank(user_id, month)
         embed = create_embed(user, rank, month)
 
+        # ✅ 버튼 상태 변경 없이 본인만 ephemeral 메시지
         await interaction.response.send_message("🎉 출석 완료!", embed=embed, ephemeral=True)
 
-        # 채널 갱신 + 로그
+        # 채널 갱신
         asyncio.create_task(update_stats_channels(bot))
 
 # ===== 슬래시 명령어 =====
@@ -233,25 +236,23 @@ async def update_stats_channels(bot):
     new_today_name=f"Today Check : {today_count}"
     new_total_name=f"Total Check : {total_attendance}"
 
-    # 오늘 출석 채널
-    if today_channel.name!=new_today_name:
-        try:
+    try:
+        if today_channel.name!=new_today_name:
             await today_channel.edit(name=new_today_name)
             print(f"✅ 채널 이름 변경 성공: {today_channel.id} → {new_today_name}")
-        except discord.Forbidden:
-            print(f"❌ 권한 부족: 오늘 출석 채널({today_channel.id}) 이름 변경 실패")
-        except Exception as e:
-            print(f"❌ 오늘 출석 채널 변경 에러: {e}")
+    except discord.Forbidden:
+        print(f"❌ 권한 부족: 오늘 출석 채널({today_channel.id}) 이름 변경 실패")
+    except Exception as e:
+        print(f"❌ 오늘 출석 채널 변경 에러: {e}")
 
-    # 총 누적 출석 채널
-    if total_channel.name!=new_total_name:
-        try:
+    try:
+        if total_channel.name!=new_total_name:
             await total_channel.edit(name=new_total_name)
             print(f"✅ 채널 이름 변경 성공: {total_channel.id} → {new_total_name}")
-        except discord.Forbidden:
-            print(f"❌ 권한 부족: 총 누적 출석 채널({total_channel.id}) 이름 변경 실패")
-        except Exception as e:
-            print(f"❌ 총 누적 출석 채널 변경 에러: {e}")
+    except discord.Forbidden:
+        print(f"❌ 권한 부족: 총 누적 출석 채널({total_channel.id}) 이름 변경 실패")
+    except Exception as e:
+        print(f"❌ 총 누적 출석 채널 변경 에러: {e}")
 
 @tasks.loop(minutes=1)
 async def refresh_stats_loop():
