@@ -107,11 +107,8 @@ class AttendanceView(discord.ui.View):
         rank = get_rank(user_id, month)
         embed = create_embed(user, rank, month)
 
-        # ✅ 버튼 상태 변경 없이 본인만 ephemeral 메시지
+        # ✅ 본인에게만 메시지
         await interaction.response.send_message("🎉 출석 완료!", embed=embed, ephemeral=True)
-
-        # 채널 갱신
-        asyncio.create_task(update_stats_channels(bot))
 
 # ===== 슬래시 명령어 =====
 @tree.command(name="출석패널", description="출석 버튼 생성")
@@ -222,7 +219,7 @@ async def daily_check():
         if now.day==1:
             await announce_last_month()
 
-# ===== 채널 갱신 + 로그 =====
+# ===== 채널 갱신 (5분 주기) =====
 async def update_stats_channels(bot):
     today_channel = bot.get_channel(TODAY_CHANNEL_ID)
     total_channel = bot.get_channel(TOTAL_CHANNEL_ID)
@@ -254,13 +251,16 @@ async def update_stats_channels(bot):
     except Exception as e:
         print(f"❌ 총 누적 출석 채널 변경 에러: {e}")
 
-@tasks.loop(minutes=1)
+@tasks.loop(minutes=5)
 async def refresh_stats_loop():
     await update_stats_channels(bot)
 
 # ===== 핵심 =====
 @bot.event
 async def on_ready():
+    # Persistent View 등록 (상호작용 실패 방지)
+    bot.add_view(AttendanceView())
+
     try:
         synced = await tree.sync()
         print(f"슬래시 명령어 {len(synced)}개 동기화 완료")
