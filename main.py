@@ -252,6 +252,46 @@ async def daily_check():
         if now.day == 1:
             await announce_last_month()
 
+from dateutil.relativedelta import relativedelta
+
+@tree.command(name="출석점검", description="특정 유저의 출석 기록 확인")
+@app_commands.describe(member="출석 기록을 확인할 유저")
+async def check_attendance(interaction: discord.Interaction, member: discord.Member):
+    user_id = str(member.id)
+    if user_id not in data:
+        await interaction.response.send_message(f"❌ {member.display_name}님의 출석 기록이 없습니다.", ephemeral=True)
+        return
+
+    user = data[user_id]
+    now = datetime.now(KST)
+    month = now.strftime("%Y-%m")
+
+    # 이번 달 출석
+    this_month_count = user.get("monthly", {}).get(month, 0)
+
+    # 총 누적 출석
+    total_count = user.get("total", 0)
+
+    # 지난 6개월 달별 출석
+    last_6_months = []
+    for i in range(6):
+        m = (now - relativedelta(months=i)).strftime("%Y-%m")
+        count = user.get("monthly", {}).get(m, 0)
+        last_6_months.append(f"{m} : {count}일")
+    last_6_months.reverse()  # 오래된 달부터 표시
+
+    embed = discord.Embed(
+        title=f"📊 {member.display_name} 출석 기록",
+        description=(
+            f"📅 이번 달 출석: {this_month_count}일\n"
+            f"📈 총 누적 출석: {total_count}일\n\n"
+            f"🗓 지난 6개월 출석:\n" + "\n".join(last_6_months)
+        ),
+        color=0x00ffcc
+    )
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
 # ===== 채널 이름 갱신 =====
 async def update_stats_channels(bot):
     today_channel = bot.get_channel(TODAY_CHANNEL_ID)
