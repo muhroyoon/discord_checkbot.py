@@ -148,14 +148,27 @@ async def ranking(interaction: discord.Interaction):
 
 @tree.command(name="출석통계", description="출석 통계 보기")
 async def stats(interaction: discord.Interaction):
-    today = datetime.now(KST).strftime("%Y-%m-%d")
+    now = datetime.now(KST)
+    today = now.strftime("%Y-%m-%d")
+    month = now.strftime("%Y-%m")
 
+    total_users = len(data)
     today_count = len([u for u in data.values() if u["last_attendance"] == today])
-    total = sum(u["total"] for u in data.values())
+    total_attendance = sum(u["total"] for u in data.values())
+    monthly_total = sum(u["monthly"].get(month, 0) for u in data.values())
+    max_streak = max([u["streak"] for u in data.values()], default=0)
 
-    embed = discord.Embed(title="📊 출석 통계", color=0x3399ff)
-    embed.add_field(name="오늘 출석자", value=f"{today_count}명")
-    embed.add_field(name="총 출석 수", value=f"{total}")
+    embed = discord.Embed(
+        title="📊 출석 통계",
+        description=(
+            f"👥 전체 유저: {total_users}명\n"
+            f"✅ 오늘 출석: {today_count}명\n"
+            f"📅 이번달 출석: {monthly_total}회\n"
+            f"🔥 최고 연속 출석: {max_streak}일\n"
+            f"📈 총 누적 출석: {total_attendance}회"
+        ),
+        color=0x2b2d31  # 디스코드 느낌 다크톤
+    )
 
     await interaction.response.send_message(embed=embed)
 
