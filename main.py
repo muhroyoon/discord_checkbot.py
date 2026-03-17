@@ -10,13 +10,13 @@ import asyncio
 TOKEN = os.getenv("TOKEN")
 
 # 채널 ID
-ATTENDANCE_CHANNEL_ID = 1483339751674089544  # 출석 버튼 / 통계용
-TODAY_CHANNEL_ID = 1483357576996323349      # 오늘 출석 표시 채널 (텍스트 채널)
-TOTAL_CHANNEL_ID = 1483357602304757872      # 총 누적 출석 표시 채널 (텍스트 채널)
-MONTHLY_RANK_CHANNEL_ID = 1397125455454273578  # 월간 랭킹 공지 채널
+ATTENDANCE_CHANNEL_ID = 1483339751674089544
+TODAY_CHANNEL_ID = 1483357576996323349
+TOTAL_CHANNEL_ID = 1483357602304757872
+MONTHLY_RANK_CHANNEL_ID = 1397125455454273578
 
-# 서버 ID (월간 랭킹용)
-GUILD_ID = 1377672440276058214  # 본인 서버 ID로 교체 필요
+# 서버 ID
+GUILD_ID = 1377672440276058214
 
 # 랭킹 대상 역할
 ROLE_IDS = [
@@ -87,12 +87,7 @@ class AttendanceView(discord.ui.View):
         month = now.strftime("%Y-%m")
 
         if user_id not in data:
-            data[user_id] = {
-                "last_attendance": "",
-                "streak": 0,
-                "total": 0,
-                "monthly": {}
-            }
+            data[user_id] = {"last_attendance":"","streak":0,"total":0,"monthly":{}}
 
         user = data[user_id]
 
@@ -100,23 +95,19 @@ class AttendanceView(discord.ui.View):
             await interaction.response.send_message("⚠ 이미 출석했습니다!", ephemeral=True)
             return
 
-        # 연속 출석 계산
         yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
         user["streak"] = user["streak"] + 1 if user["last_attendance"] == yesterday else 1
-
         user["last_attendance"] = today
         user["total"] += 1
         user["monthly"][month] = user.get("monthly", {}).get(month, 0) + 1
 
         save_data(data)
-
         rank = get_rank(user_id, month)
         embed = create_embed(user, rank, month)
 
-        # ✅ 본인만 ephemeral 메시지
         await interaction.response.send_message("🎉 출석 완료!", embed=embed, ephemeral=True)
 
-        # 채널 이름 갱신 (interaction과 분리)
+        # 채널 갱신 + 로그
         asyncio.create_task(update_stats_channels(bot))
 
 # ===== 슬래시 명령어 =====
@@ -126,28 +117,8 @@ async def attendance_panel(interaction: discord.Interaction):
         await interaction.response.send_message("❌ 출석 채널에서만 사용 가능", ephemeral=True)
         return
 
-    embed = discord.Embed(
-        title="📢 오늘의 출석",
-        description="버튼을 눌러 출석하세요!",
-        color=0x00ffcc
-    )
-
+    embed = discord.Embed(title="📢 오늘의 출석", description="버튼을 눌러 출석하세요!", color=0x00ffcc)
     await interaction.response.send_message(embed=embed, view=AttendanceView())
-
-@tree.command(name="출석랭킹", description="출석 랭킹 보기")
-async def ranking(interaction: discord.Interaction):
-    now = datetime.now(KST)
-    month = now.strftime("%Y-%m")
-
-    ranking_list = get_ranking(month)[:10]
-
-    desc = ""
-    for i, (user_id, count) in enumerate(ranking_list):
-        user = await bot.fetch_user(int(user_id))
-        desc += f"{i+1}위 {user.name} - {count}일\n"
-
-    embed = discord.Embed(title="🏆 출석 랭킹", description=desc, color=0xffcc00)
-    await interaction.response.send_message(embed=embed)
 
 @tree.command(name="출석통계", description="출석 통계 보기")
 async def stats(interaction: discord.Interaction):
@@ -160,102 +131,27 @@ async def stats(interaction: discord.Interaction):
         await interaction.response.send_message("❌ 서버를 찾을 수 없습니다.", ephemeral=True)
         return
 
-    # 특정 역할을 가진 멤버만 카운트
-    eligible_members = [
-        m for m in guild.members
-        if any(role.id in ROLE_IDS for role in m.roles)
-    ]
+    eligible_members = [m for m in guild.members if any(role.id in ROLE_IDS for role in m.roles)]
     total_users = len(eligible_members)
 
-    # 오늘 출석
-    today_count = len([
-        u for uid, u in data.items()
-        if u["last_attendance"] == today and int(uid) in [m.id for m in eligible_members]
-    ])
-
-    # 총 누적 출석
-    total_attendance = sum([
-        u["total"] for uid, u in data.items()
-        if int(uid) in [m.id for m in eligible_members]
-    ])
-
-    # 이번달 출석
-    monthly_total = sum([
-        u["monthly"].get(month, 0) for uid, u in data.items()
-        if int(uid) in [m.id for m in eligible_members]
-    ])
-
-    # 최고 연속 출석
-    max_streak = max([
-        u["streak"] for uid, u in data.items()
-        if int(uid) in [m.id for m in eligible_members]
-    ], default=0)
+    today_count = len([u for uid, u in data.items() if u["last_attendance"]==today and int(uid) in [m.id for m in eligible_members]])
+    total_attendance = sum([u["total"] for uid, u in data.items() if int(uid) in [m.id for m in eligible_members]])
+    monthly_total = sum([u["monthly"].get(month,0) for uid,u in data.items() if int(uid) in [m.id for m in eligible_members]])
+    max_streak = max([u["streak"] for uid,u in data.items() if int(uid) in [m.id for m in eligible_members]], default=0)
 
     embed = discord.Embed(
         title="📊 출석 통계",
-        description=(
-            f"👥 전체 유저: {total_users}명\n"
-            f"✅ 오늘 출석: {today_count}명\n"
-            f"📅 이번달 출석: {monthly_total}회\n"
-            f"🔥 최고 연속 출석: {max_streak}일\n"
-            f"📈 총 누적 출석: {total_attendance}회"
-        ),
+        description=(f"👥 전체 유저: {total_users}명\n"
+                     f"✅ 오늘 출석: {today_count}명\n"
+                     f"📅 이번달 출석: {monthly_total}회\n"
+                     f"🔥 최고 연속 출석: {max_streak}일\n"
+                     f"📈 총 누적 출석: {total_attendance}회"),
         color=0x2b2d31
     )
-
     await interaction.response.send_message(embed=embed)
 
-# ===== 월간 랭킹 공지 =====
-async def announce_last_month():
-    guild = bot.get_guild(GUILD_ID)
-    if guild is None:
-        return
-
-    channel = bot.get_channel(MONTHLY_RANK_CHANNEL_ID)
-    if channel is None:
-        return
-
-    now = datetime.now(KST)
-    last_month = (now.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
-
-    eligible_members = [
-        m for m in guild.members
-        if any(role.id in ROLE_IDS for role in m.roles)
-    ]
-
-    ranking_list = []
-    for member in eligible_members:
-        user_data = data.get(str(member.id))
-        if user_data:
-            count = user_data.get("monthly", {}).get(last_month, 0)
-            ranking_list.append((member, count))
-
-    ranking_list.sort(key=lambda x: x[1], reverse=True)
-
-    desc = ""
-    for i, (member, count) in enumerate(ranking_list):
-        desc += f"{i+1}위 {member.display_name} - {count}일\n"
-
-    embed = discord.Embed(
-        title=f"🏆 {last_month} 출석 랭킹",
-        description=desc if desc else "출석 데이터가 없습니다.",
-        color=0xff6600
-    )
-
-    await channel.send(embed=embed)
-
-# ===== 자정 체크 =====
-@tasks.loop(minutes=1)
-async def daily_check():
-    now = datetime.now(KST)
-    if now.hour == 0 and now.minute == 0:
-        if now.day == 1:
-            await announce_last_month()
-
-from dateutil.relativedelta import relativedelta
-
-@tree.command(name="출석점검", description="특정 유저의 출석 기록 확인")
-@app_commands.describe(member="출석 기록을 확인할 유저")
+@tree.command(name="출석점검", description="특정 유저 출석 기록 확인")
+@app_commands.describe(member="출석 기록 확인할 유저")
 async def check_attendance(interaction: discord.Interaction, member: discord.Member):
     user_id = str(member.id)
     if user_id not in data:
@@ -265,59 +161,97 @@ async def check_attendance(interaction: discord.Interaction, member: discord.Mem
     user = data[user_id]
     now = datetime.now(KST)
     month = now.strftime("%Y-%m")
+    this_month_count = user.get("monthly", {}).get(month,0)
+    total_count = user.get("total",0)
 
-    # 이번 달 출석
-    this_month_count = user.get("monthly", {}).get(month, 0)
-
-    # 총 누적 출석
-    total_count = user.get("total", 0)
-
-    # 지난 6개월 달별 출석
     last_6_months = []
-    for i in range(6):
-        m = (now - relativedelta(months=i)).strftime("%Y-%m")
-        count = user.get("monthly", {}).get(m, 0)
-        last_6_months.append(f"{m} : {count}일")
-    last_6_months.reverse()  # 오래된 달부터 표시
+    for i in range(5,-1,-1):
+        year = now.year
+        mon = now.month - i
+        if mon<=0:
+            year-=1
+            mon+=12
+        m_str = f"{year}-{mon:02d}"
+        count = user.get("monthly", {}).get(m_str,0)
+        last_6_months.append(f"{m_str} : {count}일")
 
     embed = discord.Embed(
         title=f"📊 {member.display_name} 출석 기록",
-        description=(
-            f"📅 이번 달 출석: {this_month_count}일\n"
-            f"📈 총 누적 출석: {total_count}일\n\n"
-            f"🗓 지난 6개월 출석:\n" + "\n".join(last_6_months)
-        ),
+        description=(f"📅 이번 달 출석: {this_month_count}일\n"
+                     f"📈 총 누적 출석: {total_count}일\n\n"
+                     f"🗓 지난 6개월 출석:\n" + "\n".join(last_6_months)),
         color=0x00ffcc
     )
-
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# ===== 채널 이름 갱신 =====
+# ===== 월간 랭킹 공지 =====
+async def announce_last_month():
+    guild = bot.get_guild(GUILD_ID)
+    if guild is None: return
+    channel = bot.get_channel(MONTHLY_RANK_CHANNEL_ID)
+    if channel is None: return
+
+    now = datetime.now(KST)
+    last_month = (now.replace(day=1)-timedelta(days=1)).strftime("%Y-%m")
+    eligible_members = [m for m in guild.members if any(role.id in ROLE_IDS for role in m.roles)]
+
+    ranking_list=[]
+    for m in eligible_members:
+        user_data = data.get(str(m.id))
+        if user_data:
+            ranking_list.append((m, user_data.get("monthly",{}).get(last_month,0)))
+    ranking_list.sort(key=lambda x:x[1], reverse=True)
+
+    desc=""
+    for i,(m,count) in enumerate(ranking_list):
+        desc+=f"{i+1}위 {m.display_name} - {count}일\n"
+
+    embed=discord.Embed(title=f"🏆 {last_month} 출석 랭킹",
+                        description=desc if desc else "출석 데이터가 없습니다.",
+                        color=0xff6600)
+    await channel.send(embed=embed)
+
+# ===== 자정 체크 =====
+@tasks.loop(minutes=1)
+async def daily_check():
+    now = datetime.now(KST)
+    if now.hour==0 and now.minute==0:
+        if now.day==1:
+            await announce_last_month()
+
+# ===== 채널 갱신 + 로그 =====
 async def update_stats_channels(bot):
     today_channel = bot.get_channel(TODAY_CHANNEL_ID)
     total_channel = bot.get_channel(TOTAL_CHANNEL_ID)
     if today_channel is None or total_channel is None:
+        print("❌ 갱신 실패: 채널을 찾을 수 없음")
         return
 
-    today = datetime.now(KST).strftime("%Y-%m-%d")
-    today_count = len([u for u in data.values() if u["last_attendance"] == today])
+    today_count = len([u for u in data.values() if u["last_attendance"]==datetime.now(KST).strftime("%Y-%m-%d")])
     total_attendance = sum(u["total"] for u in data.values())
 
-    # 오늘 출석
-    new_today_name = f"Today Check : {today_count}"
-    if today_channel.name != new_today_name:
+    new_today_name=f"Today Check : {today_count}"
+    new_total_name=f"Total Check : {total_attendance}"
+
+    # 오늘 출석 채널
+    if today_channel.name!=new_today_name:
         try:
             await today_channel.edit(name=new_today_name)
+            print(f"✅ 채널 이름 변경 성공: {today_channel.id} → {new_today_name}")
         except discord.Forbidden:
             print(f"❌ 권한 부족: 오늘 출석 채널({today_channel.id}) 이름 변경 실패")
+        except Exception as e:
+            print(f"❌ 오늘 출석 채널 변경 에러: {e}")
 
-    # 총 누적 출석
-    new_total_name = f"Total Check : {total_attendance}"
-    if total_channel.name != new_total_name:
+    # 총 누적 출석 채널
+    if total_channel.name!=new_total_name:
         try:
             await total_channel.edit(name=new_total_name)
+            print(f"✅ 채널 이름 변경 성공: {total_channel.id} → {new_total_name}")
         except discord.Forbidden:
             print(f"❌ 권한 부족: 총 누적 출석 채널({total_channel.id}) 이름 변경 실패")
+        except Exception as e:
+            print(f"❌ 총 누적 출석 채널 변경 에러: {e}")
 
 @tasks.loop(minutes=1)
 async def refresh_stats_loop():
