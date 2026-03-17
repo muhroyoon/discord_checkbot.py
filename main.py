@@ -74,12 +74,12 @@ def create_embed(user, rank, month):
         color=0x00ffcc
     )
 
-# ===== 버튼 =====
+# ===== 버튼 (Persistent View) =====
 class AttendanceView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=None)
+        super().__init__(timeout=None)  # Persistent View
 
-    @discord.ui.button(label="✅ 출석하기", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="✅ 출석하기", style=discord.ButtonStyle.success, custom_id="attendance_button")
     async def attend(self, interaction: discord.Interaction, button: discord.ui.Button):
         user_id = str(interaction.user.id)
         now = datetime.now(KST)
@@ -95,7 +95,6 @@ class AttendanceView(discord.ui.View):
             await interaction.response.send_message("⚠ 이미 출석했습니다!", ephemeral=True)
             return
 
-        # 연속 출석 계산
         yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
         user["streak"] = user["streak"] + 1 if user["last_attendance"] == yesterday else 1
         user["last_attendance"] = today
@@ -107,7 +106,6 @@ class AttendanceView(discord.ui.View):
         rank = get_rank(user_id, month)
         embed = create_embed(user, rank, month)
 
-        # ✅ 본인에게만 메시지
         await interaction.response.send_message("🎉 출석 완료!", embed=embed, ephemeral=True)
 
 # ===== 슬래시 명령어 =====
@@ -258,7 +256,7 @@ async def refresh_stats_loop():
 # ===== 핵심 =====
 @bot.event
 async def on_ready():
-    # Persistent View 등록 (상호작용 실패 방지)
+    # Persistent View 등록
     bot.add_view(AttendanceView())
 
     try:
