@@ -155,11 +155,41 @@ async def stats(interaction: discord.Interaction):
     today = now.strftime("%Y-%m-%d")
     month = now.strftime("%Y-%m")
 
-    total_users = len(data)
-    today_count = len([u for u in data.values() if u["last_attendance"] == today])
-    total_attendance = sum(u["total"] for u in data.values())
-    monthly_total = sum(u["monthly"].get(month, 0) for u in data.values())
-    max_streak = max([u["streak"] for u in data.values()], default=0)
+    guild = bot.get_guild(GUILD_ID)
+    if guild is None:
+        await interaction.response.send_message("❌ 서버를 찾을 수 없습니다.", ephemeral=True)
+        return
+
+    # 특정 역할을 가진 멤버만 카운트
+    eligible_members = [
+        m for m in guild.members
+        if any(role.id in ROLE_IDS for role in m.roles)
+    ]
+    total_users = len(eligible_members)
+
+    # 오늘 출석
+    today_count = len([
+        u for uid, u in data.items()
+        if u["last_attendance"] == today and int(uid) in [m.id for m in eligible_members]
+    ])
+
+    # 총 누적 출석
+    total_attendance = sum([
+        u["total"] for uid, u in data.items()
+        if int(uid) in [m.id for m in eligible_members]
+    ])
+
+    # 이번달 출석
+    monthly_total = sum([
+        u["monthly"].get(month, 0) for uid, u in data.items()
+        if int(uid) in [m.id for m in eligible_members]
+    ])
+
+    # 최고 연속 출석
+    max_streak = max([
+        u["streak"] for uid, u in data.items()
+        if int(uid) in [m.id for m in eligible_members]
+    ], default=0)
 
     embed = discord.Embed(
         title="📊 출석 통계",
