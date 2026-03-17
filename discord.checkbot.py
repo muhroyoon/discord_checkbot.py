@@ -5,7 +5,7 @@ import json
 import os
 import asyncio
 
-TOKEN = "여기에_봇_토큰"
+TOKEN = os.getenv("TOKEN")
 ATTENDANCE_CHANNEL_ID = 1483339751674089544  # 채널 ID
 
 KST = timezone(timedelta(hours=9))
