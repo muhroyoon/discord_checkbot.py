@@ -1,12 +1,14 @@
 import discord
 from discord.ext import commands, tasks
+from discord import app_commands
 from datetime import datetime, timedelta, timezone
 import json
 import os
 import asyncio
 
 TOKEN = os.getenv("TOKEN")
-ATTENDANCE_CHANNEL_ID = 1483339751674089544  # 채널 ID
+GUILD_ID = 1377672440276058214  # 서버 ID (슬래시 즉시 적용용)
+ATTENDANCE_CHANNEL_ID = 1483339751674089544  # 출석 채널 ID
 
 KST = timezone(timedelta(hours=9))
 DATA_FILE = "attendance.json"
@@ -15,6 +17,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+tree = bot.tree
 
 # 데이터 로드/저장
 def load_data():
@@ -29,7 +32,7 @@ def save_data(data):
 
 data = load_data()
 
-# 랭킹 계산
+# 랭킹
 def get_ranking(month):
     ranking = sorted(
         [(uid, u["monthly"].get(month, 0)) for uid, u in data.items()],
@@ -42,7 +45,7 @@ def get_rank(user_id, month):
     ranking = get_ranking(month)
     return next((i+1 for i, u in enumerate(ranking) if u[0] == user_id), "-")
 
-# UI 생성
+# UI
 def create_embed(user, rank, month):
     return discord.Embed(
         title="📢 오늘의 출석",
@@ -104,7 +107,6 @@ class AttendanceView(discord.ui.View):
         save_data(data)
 
         rank = get_rank(user_id, month)
-
         embed = create_embed(user, rank, month)
 
         # 버튼 상태 변경
@@ -114,10 +116,12 @@ class AttendanceView(discord.ui.View):
 
         await interaction.edit_original_response(content="🎉 출석 완료!", embed=embed, view=self)
 
-# 출석 패널
-@bot.command()
-async def 출석패널(ctx):
-    if ctx.channel.id != ATTENDANCE_CHANNEL_ID:
+# 슬래시 명령어들
+
+@tree.command(name="출석패널", description="출석 버튼 생성")
+async def attendance_panel(interaction: discord.Interaction):
+    if interaction.channel.id != ATTENDANCE_CHANNEL_ID:
+        await interaction.response.send_message("❌ 출석 채널에서만 사용 가능", ephemeral=True)
         return
 
     embed = discord.Embed(
@@ -126,11 +130,10 @@ async def 출석패널(ctx):
         color=0x00ffcc
     )
 
-    await ctx.send(embed=embed, view=AttendanceView())
+    await interaction.response.send_message(embed=embed, view=AttendanceView())
 
-# 랭킹
-@bot.command()
-async def 출석랭킹(ctx):
+@tree.command(name="출석랭킹", description="출석 랭킹 보기")
+async def ranking(interaction: discord.Interaction):
     now = datetime.now(KST)
     month = now.strftime("%Y-%m")
 
@@ -142,11 +145,10 @@ async def 출석랭킹(ctx):
         desc += f"{i+1}위 {user.name} - {count}일\n"
 
     embed = discord.Embed(title="🏆 출석 랭킹", description=desc, color=0xffcc00)
-    await ctx.send(embed=embed)
+    await interaction.response.send_message(embed=embed)
 
-# 통계
-@bot.command()
-async def 출석통계(ctx):
+@tree.command(name="출석통계", description="출석 통계 보기")
+async def stats(interaction: discord.Interaction):
     today = datetime.now(KST).strftime("%Y-%m-%d")
 
     today_count = len([u for u in data.values() if u["last_attendance"] == today])
@@ -156,7 +158,7 @@ async def 출석통계(ctx):
     embed.add_field(name="오늘 출석자", value=f"{today_count}명")
     embed.add_field(name="총 출석 수", value=f"{total}")
 
-    await ctx.send(embed=embed)
+    await interaction.response.send_message(embed=embed)
 
 # 월간 랭킹 공지
 async def announce_last_month():
@@ -190,7 +192,9 @@ async def daily_check():
 
 @bot.event
 async def on_ready():
-    print(f"봇 로그인: {bot.user}")
+    guild = discord.Object(id=GUILD_ID)
+    await tree.sync(guild=guild)  # 즉시 적용
+    print(f"봇 로그인 완료: {bot.user}")
     daily_check.start()
 
 bot.run(TOKEN)
