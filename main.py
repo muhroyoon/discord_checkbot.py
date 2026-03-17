@@ -6,8 +6,8 @@ import json
 import os
 import asyncio
 
+# ===== 환경 변수 =====
 TOKEN = os.getenv("TOKEN")
-GUILD_ID = 1377672440276058214  # 서버 ID (슬래시 즉시 적용용)
 ATTENDANCE_CHANNEL_ID = 1483339751674089544  # 출석 채널 ID
 
 KST = timezone(timedelta(hours=9))
@@ -19,7 +19,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-# 데이터 로드/저장
+# ===== 데이터 =====
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {}
@@ -32,20 +32,19 @@ def save_data(data):
 
 data = load_data()
 
-# 랭킹
+# ===== 랭킹 =====
 def get_ranking(month):
-    ranking = sorted(
+    return sorted(
         [(uid, u["monthly"].get(month, 0)) for uid, u in data.items()],
         key=lambda x: x[1],
         reverse=True
     )
-    return ranking
 
 def get_rank(user_id, month):
     ranking = get_ranking(month)
     return next((i+1 for i, u in enumerate(ranking) if u[0] == user_id), "-")
 
-# UI
+# ===== UI =====
 def create_embed(user, rank, month):
     return discord.Embed(
         title="📢 오늘의 출석",
@@ -59,7 +58,7 @@ def create_embed(user, rank, month):
         color=0x00ffcc
     )
 
-# 버튼
+# ===== 버튼 =====
 class AttendanceView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -86,11 +85,11 @@ class AttendanceView(discord.ui.View):
             await interaction.response.send_message("⚠ 이미 출석했습니다!", ephemeral=True)
             return
 
-        # 로딩 연출
+        # 로딩
         await interaction.response.edit_message(content="⏳ 출석 처리 중...", embed=None, view=None)
         await asyncio.sleep(1)
 
-        # 스트릭 계산
+        # 스트릭
         yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
         if user["last_attendance"] == yesterday:
             user["streak"] += 1
@@ -116,7 +115,7 @@ class AttendanceView(discord.ui.View):
 
         await interaction.edit_original_response(content="🎉 출석 완료!", embed=embed, view=self)
 
-# 슬래시 명령어들
+# ===== 슬래시 명령어 (중요: on_ready보다 위!) =====
 
 @tree.command(name="출석패널", description="출석 버튼 생성")
 async def attendance_panel(interaction: discord.Interaction):
@@ -160,7 +159,7 @@ async def stats(interaction: discord.Interaction):
 
     await interaction.response.send_message(embed=embed)
 
-# 월간 랭킹 공지
+# ===== 월간 랭킹 공지 =====
 async def announce_last_month():
     channel = bot.get_channel(ATTENDANCE_CHANNEL_ID)
     now = datetime.now(KST)
@@ -181,7 +180,7 @@ async def announce_last_month():
 
     await channel.send(embed=embed)
 
-# 자정 체크
+# ===== 자정 체크 =====
 @tasks.loop(minutes=1)
 async def daily_check():
     now = datetime.now(KST)
@@ -190,16 +189,17 @@ async def daily_check():
         if now.day == 1:
             await announce_last_month()
 
+# ===== 핵심 (슬래시 등록) =====
 @bot.event
 async def on_ready():
     try:
-        guild = discord.Object(id=GUILD_ID)
-        synced = await tree.sync(guild=guild)
+        synced = await tree.sync()  # 글로벌 sync (안정)
         print(f"슬래시 명령어 {len(synced)}개 동기화 완료")
     except Exception as e:
-        print("에러:", e)
+        print("sync 에러:", e)
 
     print(f"봇 로그인 완료: {bot.user}")
     daily_check.start()
 
+# ===== 실행 =====
 bot.run(TOKEN)
