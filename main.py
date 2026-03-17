@@ -8,13 +8,29 @@ import asyncio
 
 # ===== 환경 변수 =====
 TOKEN = os.getenv("TOKEN")
-ATTENDANCE_CHANNEL_ID = 1483339751674089544  # 출석 채널 ID
+
+# 채널 ID
+ATTENDANCE_CHANNEL_ID = 1483339751674089544  # 출석 버튼 / 통계용
+TODAY_CHANNEL_ID = 1483352015747944541      # 오늘 출석 표시 채널
+TOTAL_CHANNEL_ID = 1483352131452010516      # 총 누적 출석 표시 채널
+MONTHLY_RANK_CHANNEL_ID = 1397125455454273578  # 월간 랭킹 공지 채널
+
+# 서버 ID (월간 랭킹용)
+GUILD_ID = 123456789012345678  # 본인 서버 ID로 교체 필요
+
+# 랭킹 대상 역할
+ROLE_IDS = [
+    1482028706850537676,
+    1409209830152863845,
+    1409208539548876801
+]
 
 KST = timezone(timedelta(hours=9))
 DATA_FILE = "attendance.json"
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True  # 멤버 조회 필수
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
@@ -115,8 +131,7 @@ class AttendanceView(discord.ui.View):
 
         await interaction.edit_original_response(content="🎉 출석 완료!", embed=embed, view=self)
 
-# ===== 슬래시 명령어 (중요: on_ready보다 위!) =====
-
+# ===== 슬래시 명령어 =====
 @tree.command(name="출석패널", description="출석 버튼 생성")
 async def attendance_panel(interaction: discord.Interaction):
     if interaction.channel.id != ATTENDANCE_CHANNEL_ID:
@@ -136,10 +151,10 @@ async def ranking(interaction: discord.Interaction):
     now = datetime.now(KST)
     month = now.strftime("%Y-%m")
 
-    ranking = get_ranking(month)[:10]
+    ranking_list = get_ranking(month)[:10]
 
     desc = ""
-    for i, (user_id, count) in enumerate(ranking):
+    for i, (user_id, count) in enumerate(ranking_list):
         user = await bot.fetch_user(int(user_id))
         desc += f"{i+1}위 {user.name} - {count}일\n"
 
@@ -167,27 +182,49 @@ async def stats(interaction: discord.Interaction):
             f"🔥 최고 연속 출석: {max_streak}일\n"
             f"📈 총 누적 출석: {total_attendance}회"
         ),
-        color=0x2b2d31  # 디스코드 느낌 다크톤
+        color=0x2b2d31
     )
 
     await interaction.response.send_message(embed=embed)
 
-# ===== 월간 랭킹 공지 =====
+# ===== 월간 랭킹 공지 (특정 역할) =====
 async def announce_last_month():
-    channel = bot.get_channel(ATTENDANCE_CHANNEL_ID)
+    guild = bot.get_guild(GUILD_ID)
+    if guild is None:
+        return
+
+    channel = bot.get_channel(MONTHLY_RANK_CHANNEL_ID)
+    if channel is None:
+        return
+
     now = datetime.now(KST)
     last_month = (now.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
 
-    ranking = get_ranking(last_month)[:10]
+    # 특정 역할 가진 멤버 필터링
+    eligible_members = [
+        m for m in guild.members
+        if any(role.id in ROLE_IDS for role in m.roles)
+    ]
 
+    # 랭킹 계산
+    ranking_list = []
+    for member in eligible_members:
+        user_data = data.get(str(member.id))
+        if user_data:
+            count = user_data.get("monthly", {}).get(last_month, 0)
+            ranking_list.append((member, count))
+
+    # 출석 많음 순으로 정렬
+    ranking_list.sort(key=lambda x: x[1], reverse=True)
+
+    # 랭킹 embed 생성
     desc = ""
-    for i, (user_id, count) in enumerate(ranking):
-        user = await bot.fetch_user(int(user_id))
-        desc += f"{i+1}위 {user.name} - {count}일\n"
+    for i, (member, count) in enumerate(ranking_list):
+        desc += f"{i+1}위 {member.display_name} - {count}일\n"
 
     embed = discord.Embed(
         title=f"🏆 {last_month} 출석 랭킹",
-        description=desc,
+        description=desc if desc else "출석 데이터가 없습니다.",
         color=0xff6600
     )
 
@@ -197,22 +234,47 @@ async def announce_last_month():
 @tasks.loop(minutes=1)
 async def daily_check():
     now = datetime.now(KST)
-
     if now.hour == 0 and now.minute == 0:
         if now.day == 1:
             await announce_last_month()
 
-# ===== 핵심 (슬래시 등록) =====
+# ===== 채널 이름 갱신 (오늘 출석 / 총 누적 출석) =====
+async def update_stats_channels(bot):
+    today_channel = bot.get_channel(TODAY_CHANNEL_ID)
+    total_channel = bot.get_channel(TOTAL_CHANNEL_ID)
+    if today_channel is None or total_channel is None:
+        return
+
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    today_count = len([u for u in data.values() if u["last_attendance"] == today])
+    total_attendance = sum(u["total"] for u in data.values())
+
+    # 오늘 출석 채널
+    new_today_name = f"✅ 오늘 출석: {today_count}"
+    if today_channel.name != new_today_name:
+        await today_channel.edit(name=new_today_name)
+
+    # 총 누적 출석 채널
+    new_total_name = f"📈 총 누적 출석: {total_attendance}"
+    if total_channel.name != new_total_name:
+        await total_channel.edit(name=new_total_name)
+
+@tasks.loop(minutes=1)
+async def refresh_stats_loop():
+    await update_stats_channels(bot)
+
+# ===== 핵심 (슬래시 등록 및 루프 시작) =====
 @bot.event
 async def on_ready():
     try:
-        synced = await tree.sync()  # 글로벌 sync (안정)
+        synced = await tree.sync()
         print(f"슬래시 명령어 {len(synced)}개 동기화 완료")
     except Exception as e:
         print("sync 에러:", e)
 
     print(f"봇 로그인 완료: {bot.user}")
     daily_check.start()
+    refresh_stats_loop.start()
 
 # ===== 실행 =====
 bot.run(TOKEN)
