@@ -137,17 +137,23 @@ async def stats(interaction: discord.Interaction):
     month = now.strftime("%Y-%m")
 
     guild = bot.get_guild(GUILD_ID)
-    eligible = [m for m in guild.members if any(r.id in ROLE_IDS for r in m.roles)]
+    eligible_members = [m for m in guild.members if any(role.id in ROLE_IDS for role in m.roles)]
 
-    total_users = len(eligible)
-    today_count = sum(1 for uid,u in users.items() if u["last_attendance"]==today and int(uid) in [m.id for m in eligible])
-    total_attendance = sum(u["total"] for uid,u in users.items() if int(uid) in [m.id for m in eligible])
-    monthly_total = sum(u["monthly"].get(month,0) for uid,u in users.items() if int(uid) in [m.id for m in eligible])
-    max_streak = max([u["streak"] for uid,u in users.items() if int(uid) in [m.id for m in eligible]], default=0)
+    total_users = len(eligible_members)
+    today_count = len([u for uid,u in users.items() if u["last_attendance"]==today and int(uid) in [m.id for m in eligible_members]])
+    total_attendance = sum([u["total"] for uid,u in users.items() if int(uid) in [m.id for m in eligible_members]])
+    monthly_total = sum([u["monthly"].get(month,0) for uid,u in users.items() if int(uid) in [m.id for m in eligible_members]])
+    max_streak = max([u["streak"] for uid,u in users.items() if int(uid) in [m.id for m in eligible_members]], default=0)
 
     embed = discord.Embed(
         title="📊 출석 통계",
-        description=f"👥 {total_users}명\n✅ {today_count}명\n📅 {monthly_total}회\n🔥 {max_streak}일\n📈 {total_attendance}회",
+        description=(
+            f"👥 전체 유저: {total_users}명\n"
+            f"✅ 오늘 출석: {today_count}명\n"
+            f"📅 이번달 출석: {monthly_total}회\n"
+            f"🔥 최고 연속 출석: {max_streak}일\n"
+            f"📈 총 누적 출석: {total_attendance}회"
+        ),
         color=0x2b2d31
     )
     await interaction.response.send_message(embed=embed)
