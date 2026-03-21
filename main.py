@@ -212,7 +212,6 @@ async def daily_check():
 
     if now.hour == 0 and now.minute == 0:
         today = now.strftime("%Y-%m-%d")
-
         data["today_order"] = {today: []}
         save_data(data)
 
@@ -240,10 +239,14 @@ async def update_stats_channels():
 async def refresh_stats_loop():
     await update_stats_channels()
 
+# ===== on_ready 로그 추가 =====
 @bot.event
 async def on_ready():
     bot.add_view(AttendanceView())
-    await tree.sync()
+    synced = await tree.sync()
+    print(f"봇 로그인 완료: {bot.user}")
+    print(f"슬래시 명령어 {len(synced)}개 동기화 완료 ✅")
+    print("봇준비완료 🚀 모든 기능 정상 작동")
     daily_check.start()
     refresh_stats_loop.start()
 
