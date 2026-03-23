@@ -120,6 +120,33 @@ class AttendanceView(discord.ui.View):
 
         await update_stats_channels()
 
+# ===== 🔥 추가된 버튼 (채널 이동) =====
+class MoveToAttendanceView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="📍 출석하러 가기",
+        style=discord.ButtonStyle.link,
+        url=f"https://discord.com/channels/{GUILD_ID}/{ATTENDANCE_CHANNEL_ID}"
+    )
+    async def move(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pass
+
+# ===== 🔥 추가된 자정 메시지 =====
+async def send_midnight_message():
+    channel = bot.get_channel(ATTENDANCE_CHANNEL_ID)
+    if not channel:
+        return
+
+    embed = discord.Embed(
+        title="🌙 출석 초기화 완료!",
+        description="```yaml\n출석체크가 초기화 되었습니다!!\n지금 바로 출석체크하세요!! 🚀```",
+        color=0x00ffcc
+    )
+
+    await channel.send(embed=embed, view=MoveToAttendanceView())
+
 # ===== 명령어 =====
 @tree.command(name="출석패널", description="출석 버튼 생성")
 async def attendance_panel(interaction: discord.Interaction):
@@ -239,6 +266,8 @@ async def daily_check():
         data["today_order"] = {today: []}
         save_data(data)
 
+        await send_midnight_message()  # 🔥 추가된 부분
+
         if now.day == 1:
             await announce_last_month()
 
@@ -263,10 +292,11 @@ async def update_stats_channels():
 async def refresh_stats_loop():
     await update_stats_channels()
 
-# ===== on_ready 로그 추가 =====
+# ===== on_ready =====
 @bot.event
 async def on_ready():
     bot.add_view(AttendanceView())
+    bot.add_view(MoveToAttendanceView())  # 🔥 추가
     synced = await tree.sync()
     print(f"봇 로그인 완료: {bot.user}")
     print(f"슬래시 명령어 {len(synced)}개 동기화 완료 ✅")
