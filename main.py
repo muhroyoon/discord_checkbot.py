@@ -121,17 +121,18 @@ class AttendanceView(discord.ui.View):
         await update_stats_channels()
 
 # ===== 🔥 추가된 버튼 (채널 이동) =====
+# ===== 🔥 수정된 버튼 (채널 이동) =====
 class MoveToAttendanceView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(
-        label="📍 출석하러 가기",
-        style=discord.ButtonStyle.link,
-        url=f"https://discord.com/channels/{GUILD_ID}/{ATTENDANCE_CHANNEL_ID}"
-    )
-    async def move(self, interaction: discord.Interaction, button: discord.ui.Button):
-        pass
+        self.add_item(
+            discord.ui.Button(
+                label="📍 출석하러 가기",
+                style=discord.ButtonStyle.link,
+                url=f"https://discord.com/channels/{GUILD_ID}/{ATTENDANCE_CHANNEL_ID}"
+            )
+        )
 
 # ===== 🔥 추가된 자정 메시지 =====
 async def send_midnight_message():
