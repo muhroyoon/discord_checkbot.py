@@ -8,7 +8,7 @@ import os
 TOKEN = os.getenv("TOKEN")
 
 ATTENDANCE_CHANNEL_ID = 1483339751674089544
-MIDNIGHT_CHANNEL_ID = 1377672440783704219  # 🔥 자정 알림 채널
+MIDNIGHT_CHANNEL_ID = 1377672440783704219
 TODAY_CHANNEL_ID = 1483357576996323349
 TOTAL_CHANNEL_ID = 1483357602304757872
 MONTHLY_RANK_CHANNEL_ID = 1397125455454273578
@@ -120,11 +120,10 @@ class AttendanceView(discord.ui.View):
         await interaction.response.send_message("🎉 출석 완료!", embed=embed, ephemeral=True)
         await update_stats_channels()
 
-# ===== 🔥 채널 이동 버튼 =====
+# ===== 이동 버튼 =====
 class MoveToAttendanceView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-
         self.add_item(
             discord.ui.Button(
                 label="📍 출석하러 가기",
@@ -133,7 +132,7 @@ class MoveToAttendanceView(discord.ui.View):
             )
         )
 
-# ===== 🔥 자정 메시지 =====
+# ===== 자정 메시지 =====
 async def send_midnight_message():
     channel = bot.get_channel(MIDNIGHT_CHANNEL_ID)
     if not channel:
@@ -146,7 +145,7 @@ async def send_midnight_message():
     )
 
     await channel.send(
-        content="@here",  # 🔥 멘션 추가
+        content="@here",
         embed=embed,
         view=MoveToAttendanceView(),
         allowed_mentions=discord.AllowedMentions(everyone=True)
@@ -161,6 +160,87 @@ async def attendance_panel(interaction: discord.Interaction):
 
     embed = discord.Embed(title="📢 오늘의 출석", description="버튼을 눌러 출석하세요!", color=0x00ffcc)
     await interaction.response.send_message(embed=embed, view=AttendanceView())
+
+@tree.command(name="출석통계", description="출석 통계 보기")
+async def stats(interaction: discord.Interaction):
+    now = datetime.now(KST)
+    today = now.strftime("%Y-%m-%d")
+    month = now.strftime("%Y-%m")
+
+    guild = bot.get_guild(GUILD_ID)
+    eligible_members = [m for m in guild.members if any(role.id in ROLE_IDS for role in m.roles)]
+
+    total_users = len(eligible_members)
+    today_count = len([u for uid,u in users.items() if u["last_attendance"]==today and int(uid) in [m.id for m in eligible_members]])
+    total_attendance = sum([u["total"] for uid,u in users.items() if int(uid) in [m.id for m in eligible_members]])
+    monthly_total = sum([u["monthly"].get(month,0) for uid,u in users.items() if int(uid) in [m.id for m in eligible_members]])
+    max_streak = max([u["streak"] for uid,u in users.items() if int(uid) in [m.id for m in eligible_members]], default=0)
+
+    embed = discord.Embed(
+        title="📊 출석 통계",
+        description=(
+            f"👥 전체 유저: {total_users}명\n"
+            f"✅ 오늘 출석: {today_count}명\n"
+            f"📅 이번달 출석: {monthly_total}회\n"
+            f"🔥 최고 연속 출석: {max_streak}일\n"
+            f"📈 총 누적 출석: {total_attendance}회"
+        ),
+        color=0x2b2d31
+    )
+    await interaction.response.send_message(embed=embed)
+
+@tree.command(name="출석랭킹", description="이번 달 출석 랭킹")
+async def ranking(interaction: discord.Interaction):
+    now = datetime.now(KST)
+    month = now.strftime("%Y-%m")
+
+    ranking_list = [(uid, u["monthly"].get(month,0)) for uid,u in users.items()]
+    ranking_list.sort(key=lambda x:x[1], reverse=True)
+
+    desc=""
+    for i,(uid,count) in enumerate(ranking_list[:10]):
+        member = interaction.guild.get_member(int(uid))
+        if member:
+            desc += f"{i+1}위 {member.display_name} - {count}일\n"
+
+    embed = discord.Embed(title=f"🏆 {month} 랭킹", description=desc or "없음", color=0xffcc00)
+    await interaction.response.send_message(embed=embed)
+
+@tree.command(name="출석점검", description="유저 출석 확인 (이번 달/총/지난 6개월)")
+@app_commands.describe(member="출석 기록 확인할 유저")
+async def check_attendance(interaction: discord.Interaction, member: discord.Member):
+    user_id = str(member.id)
+    if user_id not in users:
+        await interaction.response.send_message(f"❌ {member.display_name}님의 출석 기록이 없습니다.", ephemeral=True)
+        return
+
+    user = users[user_id]
+    now = datetime.now(KST)
+    month = now.strftime("%Y-%m")
+
+    this_month_count = user.get("monthly", {}).get(month, 0)
+    total_count = user.get("total", 0)
+
+    last_6_months = []
+    for i in range(5, -1, -1):
+        year = now.year
+        mon = now.month - i
+        if mon <= 0:
+            year -= 1
+            mon += 12
+        m_str = f"{year}-{mon:02d}"
+        last_6_months.append(f"{m_str} : {user.get('monthly', {}).get(m_str, 0)}일")
+
+    embed = discord.Embed(
+        title=f"📊 {member.display_name} 출석 기록",
+        description=(
+            f"📅 이번 달 출석: {this_month_count}일\n"
+            f"📈 총 누적 출석: {total_count}일\n\n"
+            f"🗓 지난 6개월 출석:\n" + "\n".join(last_6_months)
+        ),
+        color=0x00ffcc
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ===== 자정 체크 =====
 @tasks.loop(minutes=1)
