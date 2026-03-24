@@ -156,20 +156,20 @@ async def ranking(interaction: discord.Interaction):
     now = datetime.now(KST)
     month = now.strftime("%Y-%m")
 
-   guild = interaction.guild
+    guild = interaction.guild
 
-ranking_list = []
-for member in guild.members:
-    if any(role.id in ROLE_IDS for role in member.roles):
-        uid = str(member.id)
-        count = users.get(uid, {}).get("monthly", {}).get(month, 0)
-        ranking_list.append((uid, count))
+    ranking_list = []
+    for member in guild.members:
+        if any(role.id in ROLE_IDS for role in member.roles):
+            uid = str(member.id)
+            count = users.get(uid, {}).get("monthly", {}).get(month, 0)
+            ranking_list.append((uid, count))
 
-ranking_list.sort(key=lambda x: x[1], reverse=True)
+    ranking_list.sort(key=lambda x: x[1], reverse=True)
 
     view = RankingView(ranking_list, interaction.guild, month)
     await interaction.response.send_message(embed=view.get_embed(), view=view)
-
+    
 @tree.command(name="출석점검")
 async def check(interaction: discord.Interaction, member: discord.Member):
     uid = str(member.id)
