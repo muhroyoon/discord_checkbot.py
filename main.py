@@ -46,12 +46,16 @@ def save_data():
 data = load_data()
 users = data["users"]
 
-# ===== 출석 =====
+# ===== 출석 버튼 =====
 class AttendanceView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="✅ 출석하기", style=discord.ButtonStyle.success)
+    @discord.ui.button(
+        label="✅ 출석하기",
+        style=discord.ButtonStyle.success,
+        custom_id="attendance_button"  # 🔥 필수
+    )
     async def attend(self, interaction: discord.Interaction, button: discord.ui.Button):
         user_id = str(interaction.user.id)
         now = datetime.now(KST)
@@ -74,6 +78,7 @@ class AttendanceView(discord.ui.View):
         user["monthly"][month] = user["monthly"].get(month,0)+1
 
         save_data()
+
         await interaction.response.send_message("🎉 출석 완료!", ephemeral=True)
 
 # ===== 이동 버튼 =====
@@ -111,17 +116,17 @@ class RankingView(discord.ui.View):
 
         return discord.Embed(
             title=f"🏆 {self.month} 랭킹 ({self.page+1}/{(len(self.ranking_list)-1)//self.per_page+1})",
-            description=desc,
+            description=desc or "없음",
             color=0xffcc00
         )
 
-    @discord.ui.button(label="◀")
+    @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
     async def prev(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.page > 0:
             self.page -= 1
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
-    @discord.ui.button(label="▶")
+    @discord.ui.button(label="▶", style=discord.ButtonStyle.secondary)
     async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
         if (self.page+1)*self.per_page < len(self.ranking_list):
             self.page += 1
