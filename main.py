@@ -12,6 +12,7 @@ MIDNIGHT_CHANNEL_ID = 1377672440783704219
 TODAY_CHANNEL_ID = 1483357576996323349
 TOTAL_CHANNEL_ID = 1483357602304757872
 GUILD_ID = 1377672440276058214
+ROLE_IDS = [1482028706850537676, 1409209830152863845, 1409208539548876801]
 
 KST = timezone(timedelta(hours=9))
 DATA_FILE = "/data/attendance.json"
@@ -155,8 +156,16 @@ async def ranking(interaction: discord.Interaction):
     now = datetime.now(KST)
     month = now.strftime("%Y-%m")
 
-    ranking_list = [(uid, u["monthly"].get(month,0)) for uid,u in users.items()]
-    ranking_list.sort(key=lambda x:x[1], reverse=True)
+   guild = interaction.guild
+
+ranking_list = []
+for member in guild.members:
+    if any(role.id in ROLE_IDS for role in member.roles):
+        uid = str(member.id)
+        count = users.get(uid, {}).get("monthly", {}).get(month, 0)
+        ranking_list.append((uid, count))
+
+ranking_list.sort(key=lambda x: x[1], reverse=True)
 
     view = RankingView(ranking_list, interaction.guild, month)
     await interaction.response.send_message(embed=view.get_embed(), view=view)
