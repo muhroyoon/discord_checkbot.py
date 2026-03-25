@@ -250,11 +250,11 @@ async def check_attendance(interaction: discord.Interaction, member: discord.Mem
 class TodayAttendanceView(discord.ui.View):
     def __init__(self, today_users, guild, per_page=10):
         super().__init__(timeout=180)
-        self.today_users = today_users
+        self.today_users = today_users  # 오늘 출석자 ID 리스트
         self.guild = guild
         self.per_page = per_page
         self.page = 0
-        self.total_pages = (len(today_users) - 1) // per_page + 1
+        self.total_pages = max((len(today_users) - 1) // per_page + 1, 1)  # 최소 1페이지
 
     def get_embed(self):
         start = self.page * self.per_page
@@ -262,17 +262,15 @@ class TodayAttendanceView(discord.ui.View):
         chunk = self.today_users[start:end]
 
         desc_lines = []
-        for i, uid in enumerate(chunk, start=start+1):
-            try:
-                member = self.guild.get_member(int(uid))
-                name = member.display_name if member else f"ID:{uid}"
-            except:
-                name = f"ID:{uid}"
+        for i, uid in enumerate(chunk, start=start + 1):
+            # 캐시 없으면 ID로 표시
+            member = self.guild.get_member(int(uid))
+            name = member.display_name if member else f"ID:{uid}"
             desc_lines.append(f"{i}등. {name}")
 
         description = f"총 출석 인원: {len(self.today_users)}명\n\n" + "\n".join(desc_lines)
         embed = discord.Embed(
-            title=f"📅 오늘 출석 현황 ({self.page+1}/{self.total_pages}페이지)",
+            title=f"📅 오늘 출석 현황 ({self.page + 1}/{self.total_pages}페이지)",
             description=description,
             color=0x00ffcc
         )
@@ -283,12 +281,16 @@ class TodayAttendanceView(discord.ui.View):
         if self.page > 0:
             self.page -= 1
             await interaction.response.edit_message(embed=self.get_embed(), view=self)
+        else:
+            await interaction.response.defer()  # 첫 페이지일 때 아무 변화 없음
 
     @discord.ui.button(label="다음 ▶", style=discord.ButtonStyle.secondary)
     async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.page+1 < self.total_pages:
+        if self.page + 1 < self.total_pages:
             self.page += 1
             await interaction.response.edit_message(embed=self.get_embed(), view=self)
+        else:
+            await interaction.response.defer()  # 마지막 페이지일 때 아무 변화 없음
 
 
 @tree.command(name="오늘출석", description="오늘 출석한 유저 전체 목록 확인 (출석 순서)")
