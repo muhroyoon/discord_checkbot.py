@@ -295,6 +295,29 @@ async def today_attendance(interaction: discord.Interaction):
 
     await interaction.response.send_message(embed=view.get_embed(), view=view, ephemeral=True)
 
+@tree.command(name="출석생성", description="오늘 출석 버튼 생성 (관리자용)")
+async def create_attendance(interaction: discord.Interaction):
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+
+    # 오늘 데이터 없으면 생성
+    if today not in data["today_order"]:
+        data["today_order"][today] = []
+        save_data()
+
+    embed = discord.Embed(
+        title=f"📅 {today} 출석하기",
+        description="🥇 1등: 없음\n\n현재 출석 인원: 0명",
+        color=0x00ffcc
+    )
+
+    channel = bot.get_channel(ATTENDANCE_CHANNEL_ID)
+
+    await channel.send(
+        embed=embed,
+        view=DailyAttendanceView(today)
+    )
+
+    await interaction.response.send_message("✅ 출석 버튼 생성 완료", ephemeral=True)
 
 # ===== 자정 =====
 @tasks.loop(minutes=1)
