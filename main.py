@@ -211,23 +211,41 @@ async def ranking(interaction: discord.Interaction):
     view = RankingView(ranking_list, interaction.guild, month)
     await interaction.response.send_message(embed=view.get_embed(), view=view)
 
-@tree.command(name="출석점검")
-async def check(interaction: discord.Interaction, member: discord.Member):
-    uid = str(member.id)
-    if uid not in users:
-        await interaction.response.send_message("기록 없음", ephemeral=True)
+@tree.command(name="출석점검", description="유저 출석 확인 (이번 달/총/지난 6개월)")
+@app_commands.describe(member="출석 기록 확인할 유저")
+async def check_attendance(interaction: discord.Interaction, member: discord.Member):
+    user_id = str(member.id)
+    if user_id not in users:
+        await interaction.response.send_message(f"❌ {member.display_name}님의 출석 기록이 없습니다.", ephemeral=True)
         return
 
-    user = users[uid]
+    user = users[user_id]
     now = datetime.now(KST)
     month = now.strftime("%Y-%m")
 
+    this_month_count = user.get("monthly", {}).get(month, 0)
+    total_count = user.get("total", 0)
+
+    last_6_months = []
+    for i in range(5, -1, -1):
+        year = now.year
+        mon = now.month - i
+        if mon <= 0:
+            year -= 1
+            mon += 12
+        m_str = f"{year}-{mon:02d}"
+        last_6_months.append(f"{m_str} : {user.get('monthly', {}).get(m_str, 0)}일")
+
     embed = discord.Embed(
-        title=f"{member.display_name}",
-        description=f"이번달: {user['monthly'].get(month,0)}일\n총: {user['total']}일",
+        title=f"📊 {member.display_name} 출석 기록",
+        description=(
+            f"📅 이번 달 출석: {this_month_count}일\n"
+            f"📈 총 누적 출석: {total_count}일\n\n"
+            f"🗓 지난 6개월 출석:\n" + "\n".join(last_6_months)
+        ),
         color=0x00ffcc
     )
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ===== 자정 =====
 @tasks.loop(minutes=1)
