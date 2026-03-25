@@ -263,8 +263,11 @@ class TodayAttendanceView(discord.ui.View):
 
         desc_lines = []
         for i, uid in enumerate(chunk, start=start+1):
-            member = self.guild.get_member(int(uid))
-            name = member.display_name if member else f"ID:{uid}"
+            try:
+                member = self.guild.get_member(int(uid))
+                name = member.display_name if member else f"ID:{uid}"
+            except:
+                name = f"ID:{uid}"
             desc_lines.append(f"{i}등. {name}")
 
         description = f"총 출석 인원: {len(self.today_users)}명\n\n" + "\n".join(desc_lines)
@@ -301,6 +304,7 @@ async def today_attendance(interaction: discord.Interaction):
     guild = interaction.guild
     view = TodayAttendanceView(today_users, guild)
     await interaction.response.send_message(embed=view.get_embed(), view=view, ephemeral=True)
+    
 # ===== 자정 =====
 @tasks.loop(minutes=1)
 async def daily():
