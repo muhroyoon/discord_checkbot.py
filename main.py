@@ -247,7 +247,48 @@ async def check_attendance(interaction: discord.Interaction, member: discord.Mem
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@tree.command(name="오늘출석", description="오늘 출석한 유저 목록 확인 (출석 순서)")
+class TodayAttendanceView(discord.ui.View):
+    def __init__(self, today_users, guild, per_page=10):
+        super().__init__(timeout=180)
+        self.today_users = today_users
+        self.guild = guild
+        self.per_page = per_page
+        self.page = 0
+        self.total_pages = (len(today_users) - 1) // per_page + 1
+
+    def get_embed(self):
+        start = self.page * self.per_page
+        end = start + self.per_page
+        chunk = self.today_users[start:end]
+
+        desc_lines = []
+        for i, uid in enumerate(chunk, start=start+1):
+            member = self.guild.get_member(int(uid))
+            name = member.display_name if member else f"ID:{uid}"
+            desc_lines.append(f"{i}등. {name}")
+
+        description = f"총 출석 인원: {len(self.today_users)}명\n\n" + "\n".join(desc_lines)
+        embed = discord.Embed(
+            title=f"📅 오늘 출석 현황 ({self.page+1}/{self.total_pages}페이지)",
+            description=description,
+            color=0x00ffcc
+        )
+        return embed
+
+    @discord.ui.button(label="◀ 이전", style=discord.ButtonStyle.secondary)
+    async def prev_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.page > 0:
+            self.page -= 1
+            await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    @discord.ui.button(label="다음 ▶", style=discord.ButtonStyle.secondary)
+    async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.page+1 < self.total_pages:
+            self.page += 1
+            await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+
+@tree.command(name="오늘출석", description="오늘 출석한 유저 전체 목록 확인 (출석 순서)")
 async def today_attendance(interaction: discord.Interaction):
     now = datetime.now(KST)
     today = now.strftime("%Y-%m-%d")
@@ -258,21 +299,8 @@ async def today_attendance(interaction: discord.Interaction):
         return
 
     guild = interaction.guild
-    desc_lines = []
-
-    for i, uid in enumerate(today_users, start=1):
-        member = guild.get_member(int(uid))
-        name = member.display_name if member else f"ID:{uid}"
-        desc_lines.append(f"{i}등. {name}")
-
-    embed = discord.Embed(
-        title=f"📅 {today} 출석 현황",
-        description="\n".join(desc_lines),
-        color=0x00ffcc
-    )
-
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
+    view = TodayAttendanceView(today_users, guild)
+    await interaction.response.send_message(embed=view.get_embed(), view=view, ephemeral=True)
 # ===== 자정 =====
 @tasks.loop(minutes=1)
 async def daily():
