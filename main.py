@@ -315,6 +315,27 @@ async def daily():
             allowed_mentions=discord.AllowedMentions(everyone=True)
         )
 
+# ===== 채널 갱신 =====
+async def update_stats_channels():
+    today_channel = bot.get_channel(TODAY_CHANNEL_ID)
+    total_channel = bot.get_channel(TOTAL_CHANNEL_ID)
+
+    if not today_channel or not total_channel:
+        return
+
+    today_count = sum(1 for u in users.values() if u["last_attendance"] == datetime.now(KST).strftime("%Y-%m-%d"))
+    total_attendance = sum(u["total"] for u in users.values())
+
+    try:
+        await today_channel.edit(name=f"Today Check : {today_count}")
+        await total_channel.edit(name=f"Total Check : {total_attendance}")
+    except:
+        pass
+
+@tasks.loop(minutes=10)
+async def refresh_stats_loop():
+    await update_stats_channels()
+
 # ===== 실행 =====
 @bot.event
 async def on_ready():
