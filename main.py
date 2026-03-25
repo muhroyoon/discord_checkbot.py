@@ -254,7 +254,8 @@ class TodayAttendanceView(discord.ui.View):
         self.guild = guild
         self.per_page = per_page
         self.page = 0
-        self.total_pages = max((len(today_users) - 1) // per_page + 1, 1)  # 최소 1페이지
+        # 최소 1페이지 보장
+        self.total_pages = max((len(today_users) - 1) // per_page + 1, 1)
 
     def get_embed(self):
         start = self.page * self.per_page
@@ -263,7 +264,7 @@ class TodayAttendanceView(discord.ui.View):
 
         desc_lines = []
         for i, uid in enumerate(chunk, start=start + 1):
-            # 캐시 없으면 ID로 표시
+            # 캐시가 없더라도 무조건 표시
             member = self.guild.get_member(int(uid))
             name = member.display_name if member else f"ID:{uid}"
             desc_lines.append(f"{i}등. {name}")
