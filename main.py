@@ -247,6 +247,32 @@ async def check_attendance(interaction: discord.Interaction, member: discord.Mem
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
+@tree.command(name="오늘출석", description="오늘 출석한 유저 목록 확인 (출석 순서)")
+async def today_attendance(interaction: discord.Interaction):
+    now = datetime.now(KST)
+    today = now.strftime("%Y-%m-%d")
+
+    today_users = data.get("today_order", {}).get(today, [])
+    if not today_users:
+        await interaction.response.send_message("❌ 오늘 출석한 유저가 없습니다.", ephemeral=True)
+        return
+
+    guild = interaction.guild
+    desc_lines = []
+
+    for i, uid in enumerate(today_users, start=1):
+        member = guild.get_member(int(uid))
+        name = member.display_name if member else f"ID:{uid}"
+        desc_lines.append(f"{i}등. {name}")
+
+    embed = discord.Embed(
+        title=f"📅 {today} 출석 현황",
+        description="\n".join(desc_lines),
+        color=0x00ffcc
+    )
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
 # ===== 자정 =====
 @tasks.loop(minutes=1)
 async def daily():
