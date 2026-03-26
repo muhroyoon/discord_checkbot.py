@@ -383,8 +383,14 @@ async def daily():
 async def on_ready():
     bot.add_view(DailyAttendanceView("dummy"))
     bot.add_view(MoveToAttendanceView())
-    await tree.sync()
-    daily.start()
+
+    guild = discord.Object(id=GUILD_ID)
+    await tree.sync(guild=guild)
+
+    # 🔥 핵심 수정
+    if not daily.is_running():
+        daily.start()
+
     print("READY")
 
 bot.run(TOKEN)
