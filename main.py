@@ -192,6 +192,25 @@ class RankingView(discord.ui.View):
                 return
         await interaction.response.send_message("❌ 기록 없음", ephemeral=True)
 
+@tree.command(name="출석랭킹", description="이번 달 출석 랭킹")
+async def ranking(interaction: discord.Interaction):
+    now = datetime.now(KST)
+    month = now.strftime("%Y-%m")
+
+    guild = interaction.guild
+    ranking_list = []
+
+    for member in guild.members:
+        if any(role.id in ROLE_IDS for role in member.roles):
+            uid = str(member.id)
+            count = users.get(uid, {}).get("monthly", {}).get(month, 0)
+            ranking_list.append((uid, count))
+
+    ranking_list.sort(key=lambda x: x[1], reverse=True)
+
+    view = RankingView(ranking_list, interaction.guild, month)
+    await interaction.response.send_message(embed=view.get_embed(), view=view)
+
 
 # ===== 출석점검 =====
 @tree.command(name="출석점검", description="유저 출석 확인 (이번 달/총/지난 6개월)")
