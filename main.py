@@ -70,7 +70,7 @@ class AttendanceButton(discord.ui.Button):
     async def callback(self, interaction: discord.Interaction):
         user_id = str(interaction.user.id)
         now = datetime.now(KST)
-        today = self.date
+        today = datetime.now(KST).strftime("%Y-%m-%d")
         month = now.strftime("%Y-%m")
 
         if user_id not in users:
