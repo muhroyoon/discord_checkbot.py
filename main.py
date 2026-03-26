@@ -265,7 +265,7 @@ async def daily():
         )
 
 
-@@bot.event
+@bot.event
 async def on_ready():
     bot.add_view(DailyAttendanceView("dummy"))
     bot.add_view(MoveToAttendanceView())
