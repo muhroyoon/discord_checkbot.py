@@ -148,6 +148,30 @@ class MoveToAttendanceView(discord.ui.View):
                 url=f"https://discord.com/channels/{GUILD_ID}/{ATTENDANCE_CHANNEL_ID}"
             )
         )
+    
+    @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
+    async def prev(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.page > 0:
+            self.page -= 1
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    @discord.ui.button(label="▶", style=discord.ButtonStyle.secondary)
+    async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if (self.page + 1) * self.per_page < len(self.ranking_list):
+            self.page += 1
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    @discord.ui.button(label="📍 내 순위", style=discord.ButtonStyle.success)
+    async def myrank(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user_id = str(interaction.user.id)
+        for i, (uid, count) in enumerate(self.ranking_list, start=1):
+            if uid == user_id:
+                await interaction.response.send_message(
+                    f"👉 당신의 순위: {i}위 ({count}일)",
+                    ephemeral=True
+                )
+                return
+        await interaction.response.send_message("❌ 기록 없음", ephemeral=True)
 
 
 # ===== 오늘출석 =====
@@ -195,6 +219,74 @@ class TodayAttendanceView(discord.ui.View):
         else:
             await interaction.response.defer()
 
+class RankingView(discord.ui.View):
+    def __init__(self, ranking_list, guild, month):
+        super().__init__(timeout=180)
+        self.ranking_list = ranking_list
+        self.guild = guild
+        self.page = 0
+        self.per_page = 10
+        self.month = month
+
+    def get_embed(self):
+        start = self.page * self.per_page
+        end = start + self.per_page
+        chunk = self.ranking_list[start:end]
+
+        desc = ""
+        for i, (uid, count) in enumerate(chunk, start=start + 1):
+            member = self.guild.get_member(int(uid))
+            if member:
+                desc += f"{i}위 {member.display_name} - {count}일\n"
+
+        return discord.Embed(
+            title=f"🏆 {self.month} 랭킹 ({self.page + 1}/{(len(self.ranking_list)-1)//self.per_page+1})",
+            description=desc or "없음",
+            color=0xffcc00
+        )
+
+    @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
+    async def prev(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.page > 0:
+            self.page -= 1
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    @discord.ui.button(label="▶", style=discord.ButtonStyle.secondary)
+    async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if (self.page + 1) * self.per_page < len(self.ranking_list):
+            self.page += 1
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    @discord.ui.button(label="📍 내 순위", style=discord.ButtonStyle.success)
+    async def myrank(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user_id = str(interaction.user.id)
+        for i, (uid, count) in enumerate(self.ranking_list, start=1):
+            if uid == user_id:
+                await interaction.response.send_message(
+                    f"👉 당신의 순위: {i}위 ({count}일)",
+                    ephemeral=True
+                )
+                return
+        await interaction.response.send_message("❌ 기록 없음", ephemeral=True)
+
+@tree.command(name="출석랭킹", description="이번 달 출석 랭킹")
+async def ranking(interaction: discord.Interaction):
+    now = datetime.now(KST)
+    month = now.strftime("%Y-%m")
+
+    guild = interaction.guild
+    ranking_list = []
+
+    for member in guild.members:
+        if any(role.id in ROLE_IDS for role in member.roles):
+            uid = str(member.id)
+            count = users.get(uid, {}).get("monthly", {}).get(month, 0)
+            ranking_list.append((uid, count))
+
+    ranking_list.sort(key=lambda x: x[1], reverse=True)
+
+    view = RankingView(ranking_list, interaction.guild, month)
+    await interaction.response.send_message(embed=view.get_embed(), view=view)
 
 @tree.command(name="오늘출석")
 async def today_attendance(interaction: discord.Interaction):
