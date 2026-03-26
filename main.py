@@ -101,8 +101,21 @@ class AttendanceButton(discord.ui.Button):
 
         save_data()
 
-        # ===== 1등 표시 =====
+        # ===== 🔥 추가: 순위 계산 =====
         today_list = data["today_order"][today]
+        rank = today_list.index(user_id) + 1
+
+        # ===== 🔥 수정: 개인 메시지 먼저 =====
+        await interaction.response.send_message(
+            f"✅ 출석 완료!\n\n"
+            f"🏅 오늘 순위: {rank}등\n\n"
+            f"📅 이번 달 출석: {user['monthly'][month]}일\n"
+            f"📈 총 누적 출석: {user['total']}일\n"
+            f"🔥 현재 연속 출석: {user['streak']}일",
+            ephemeral=True
+        )
+
+        # ===== 기존 출석판 업데이트 =====
         guild = interaction.guild
 
         first_user = None
@@ -124,8 +137,7 @@ class AttendanceButton(discord.ui.Button):
 
         view = DailyAttendanceView(today)
 
-        await interaction.response.edit_message(embed=embed, view=view)
-
+        await interaction.message.edit(embed=embed, view=view)
 
 # ===== 이동 버튼 =====
 class MoveToAttendanceView(discord.ui.View):
