@@ -270,13 +270,9 @@ async def on_ready():
     bot.add_view(DailyAttendanceView("dummy"))
     bot.add_view(MoveToAttendanceView())
 
-    guild = discord.Object(id=GUILD_ID)
-    await tree.sync(guild=guild)
+    await tree.sync()  # 🔥 이걸로 변경
 
     if not daily.is_running():
         daily.start()
 
     print("READY")
-
-
-bot.run(TOKEN)
