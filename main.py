@@ -378,17 +378,21 @@ async def daily():
             allowed_mentions=discord.AllowedMentions(everyone=True)
         )
 
-        await notice_channel.send(
-            content=(
-                "@here\n"
-                "🌙 **출석이 초기화되었습니다!**\n\n"
-                "🔥 오늘의 1등은 누구??\n\n"
-                "지금 바로 출석하세요!!\n\n"
-                "👇 출석하러 가기"
-            ),
-            view=MoveToAttendanceView(),
-            allowed_mentions=discord.AllowedMentions(everyone=True)
-        )
+        embed = discord.Embed(
+    title="🌙 출석 초기화 완료!",
+    description=(
+        "🔥 오늘의 1등은 누구??\n\n"
+        "지금 바로 출석하세요!!"
+    ),
+    color=0x5865F2
+)
+
+await notice_channel.send(
+    content="@here",
+    embed=embed,
+    view=MoveToAttendanceView(),
+    allowed_mentions=discord.AllowedMentions(everyone=True)
+)
 
 
 # ===== 실행 =====
