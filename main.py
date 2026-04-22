@@ -1,9 +1,10 @@
-import discord
-from discord.ext import commands, tasks
-from discord import app_commands
-from datetime import datetime, timedelta, timezone
 import json
 import os
+from datetime import datetime, timedelta, timezone
+
+import discord
+from discord import app_commands
+from discord.ext import commands, tasks
 
 TOKEN = os.getenv("TOKEN")
 
@@ -37,6 +38,13 @@ def load_data():
 
     data.setdefault("users", {})
     data.setdefault("today_order", {})
+    return data
+
+
+def refresh_data():
+    global data, users
+    data = load_data()
+    users = data["users"]
     return data
 
 
@@ -74,6 +82,7 @@ def get_ranking_periods(now):
 
 
 def get_period_ranking(guild, period_key):
+    refresh_data()
     period_name, start_date, end_date = get_ranking_periods(datetime.now(KST))[period_key]
 
     eligible_members = {
@@ -100,7 +109,9 @@ def get_period_ranking(guild, period_key):
 
 
 def count_user_attendance_in_range(user_id, start_date, end_date):
+    refresh_data()
     count = 0
+
     for day_str, attendee_ids in data.get("today_order", {}).items():
         try:
             day = datetime.strptime(day_str, "%Y-%m-%d").date()
@@ -118,6 +129,8 @@ class DailyAttendanceView(discord.ui.View):
     def __init__(self, date):
         super().__init__(timeout=None)
         self.date = date
+
+        refresh_data()
         count = len(data["today_order"].get(date, []))
         self.add_item(AttendanceButton(date, count))
 
@@ -136,10 +149,34 @@ class AttendanceButton(discord.ui.Button):
             self.disabled = True
 
     async def callback(self, interaction: discord.Interaction):
+        refresh_data()
+
         user_id = str(interaction.user.id)
         now = datetime.now(KST)
         today = self.date
         month = now.strftime("%Y-%m")
+
+        if today not in data["today_order"]:
+            data["today_order"][today] = []
+
+        today_list = data["today_order"][today]
+
+        if user_id in today_list:
+            rank = today_list.index(user_id) + 1
+            user = users.get(user_id, {})
+            monthly_count = user.get("monthly", {}).get(month, 0)
+            total_count = user.get("total", 0)
+            streak_count = user.get("streak", 0)
+
+            await interaction.response.send_message(
+                f"⚠ 이미 출석했습니다!\n\n"
+                f"🏅 오늘 순위: {rank}등\n\n"
+                f"📅 이번 달 출석: {monthly_count}일\n"
+                f"📈 총 누적 출석: {total_count}일\n"
+                f"🔥 현재 연속 출석: {streak_count}일",
+                ephemeral=True
+            )
+            return
 
         if user_id not in users:
             users[user_id] = {
@@ -162,13 +199,9 @@ class AttendanceButton(discord.ui.Button):
         user["total"] += 1
         user["monthly"][month] = user["monthly"].get(month, 0) + 1
 
-        if today not in data["today_order"]:
-            data["today_order"][today] = []
-
-        data["today_order"][today].append(user_id)
+        today_list.append(user_id)
         save_data()
 
-        today_list = data["today_order"][today]
         rank = today_list.index(user_id) + 1
 
         await interaction.response.send_message(
@@ -181,11 +214,7 @@ class AttendanceButton(discord.ui.Button):
         )
 
         guild = interaction.guild
-
-        first_user = None
-        if today_list:
-            first_user = guild.get_member(int(today_list[0]))
-
+        first_user = guild.get_member(int(today_list[0])) if today_list else None
         first_text = f"🥇 1등: {first_user.display_name}" if first_user else "🥇 1등: 없음"
 
         embed = discord.Embed(
@@ -194,11 +223,10 @@ class AttendanceButton(discord.ui.Button):
                 f"{first_text}\n\n"
                 f"현재 출석 인원: {len(today_list)}명"
             ),
-            color=0x00ffcc
+            color=0x00FFCC
         )
 
-        view = DailyAttendanceView(today)
-        await interaction.message.edit(embed=embed, view=view)
+        await interaction.message.edit(embed=embed, view=DailyAttendanceView(today))
 
 
 # ===== 이동 버튼 =====
@@ -250,7 +278,7 @@ class AttendanceRankingView(discord.ui.View):
         embed = discord.Embed(
             title="HICKS 출석랭킹!!",
             description=f"선택: [{period_name}]\n\n" + "\n".join(desc_lines),
-            color=0xffcc00
+            color=0xFFCC00
         )
         embed.set_footer(text=f"페이지 {self.page + 1}/{total_pages}")
         return embed
@@ -319,8 +347,9 @@ async def ranking(interaction: discord.Interaction):
 @tree.command(name="출석점검", description="유저 출석 확인 (이번주/지난주/이번달/6개월)")
 @app_commands.describe(member="출석 기록 확인할 유저")
 async def check_attendance(interaction: discord.Interaction, member: discord.Member):
-    user_id = str(member.id)
+    refresh_data()
 
+    user_id = str(member.id)
     if user_id not in users:
         await interaction.response.send_message(
             f"❌ {member.display_name}님의 출석 기록이 없습니다.",
@@ -355,7 +384,7 @@ async def check_attendance(interaction: discord.Interaction, member: discord.Mem
             f"3. 이번달: {this_month_count}일\n"
             f"4. 6개월:\n" + "\n".join(last_6_months)
         ),
-        color=0x00ffcc
+        color=0x00FFCC
     )
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -386,7 +415,7 @@ class TodayAttendanceView(discord.ui.View):
         return discord.Embed(
             title=f"📅 오늘 출석 현황 ({self.page + 1}/{self.total_pages})",
             description=description,
-            color=0x00ffcc
+            color=0x00FFCC
         )
 
     @discord.ui.button(label="◀ 이전", style=discord.ButtonStyle.secondary)
@@ -408,6 +437,8 @@ class TodayAttendanceView(discord.ui.View):
 
 @tree.command(name="오늘출석")
 async def today_attendance(interaction: discord.Interaction):
+    refresh_data()
+
     today = datetime.now(KST).strftime("%Y-%m-%d")
     today_users = data.get("today_order", {}).get(today, [])
 
@@ -421,6 +452,8 @@ async def today_attendance(interaction: discord.Interaction):
 
 @tree.command(name="출석생성", description="오늘 출석 버튼 생성 (관리자용)")
 async def create_attendance(interaction: discord.Interaction):
+    refresh_data()
+
     today = datetime.now(KST).strftime("%Y-%m-%d")
 
     if today not in data["today_order"]:
@@ -430,15 +463,11 @@ async def create_attendance(interaction: discord.Interaction):
     embed = discord.Embed(
         title=f"📅 {today} 출석하기",
         description="🥇 1등: 없음\n\n현재 출석 인원: 0명",
-        color=0x00ffcc
+        color=0x00FFCC
     )
 
     channel = bot.get_channel(ATTENDANCE_CHANNEL_ID)
-
-    await channel.send(
-        embed=embed,
-        view=DailyAttendanceView(today)
-    )
+    await channel.send(embed=embed, view=DailyAttendanceView(today))
 
     await interaction.response.send_message("✅ 출석 버튼 생성 완료", ephemeral=True)
 
@@ -446,13 +475,15 @@ async def create_attendance(interaction: discord.Interaction):
 # ===== 자정 =====
 @tasks.loop(minutes=1)
 async def daily():
+    refresh_data()
     now = datetime.now(KST)
 
     if now.hour == 0 and now.minute == 0:
         today = now.strftime("%Y-%m-%d")
 
-        data["today_order"][today] = []
-        save_data()
+        if today not in data["today_order"]:
+            data["today_order"][today] = []
+            save_data()
 
         attendance_channel = bot.get_channel(ATTENDANCE_CHANNEL_ID)
         notice_channel = bot.get_channel(MIDNIGHT_CHANNEL_ID)
@@ -460,7 +491,7 @@ async def daily():
         embed = discord.Embed(
             title=f"📅 {today} 출석하기",
             description="🥇 1등: 없음\n\n현재 출석 인원: 0명",
-            color=0x00ffcc
+            color=0x00FFCC
         )
 
         await attendance_channel.send(
