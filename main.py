@@ -92,6 +92,7 @@ def get_period_ranking(guild, period_key):
     }
 
     counts = {uid: 0 for uid in eligible_members}
+    position_scores = {uid: 0 for uid in eligible_members}
 
     for day_str, attendee_ids in data.get("today_order", {}).items():
         try:
@@ -100,12 +101,17 @@ def get_period_ranking(guild, period_key):
             continue
 
         if start_date <= day <= end_date:
-            for uid in attendee_ids:
+            for idx, uid in enumerate(attendee_ids, start=1):
                 if uid in counts:
                     counts[uid] += 1
+                    position_scores[uid] += idx
 
-    ranking_list = sorted(counts.items(), key=lambda x: (-x[1], x[0]))
+    ranking_list = sorted(
+        counts.items(),
+        key=lambda x: (-x[1], position_scores[x[0]], x[0])
+    )
     return period_name, start_date, end_date, ranking_list
+
 
 
 def count_user_attendance_in_range(user_id, start_date, end_date):
