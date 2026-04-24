@@ -717,12 +717,14 @@ async def on_ready():
     bot.add_view(GuestRefreshView())
 
     guild = discord.Object(id=GUILD_ID)
+    tree.copy_global_to(guild=guild)
     await tree.sync(guild=guild)
 
     if not daily.is_running():
         daily.start()
 
     print("READY")
+
 
 
 bot.run(TOKEN)
