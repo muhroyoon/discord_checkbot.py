@@ -11,11 +11,14 @@ TOKEN = os.getenv("TOKEN")
 ATTENDANCE_CHANNEL_ID = 1483339751674089544
 MIDNIGHT_CHANNEL_ID = 1377672440783704219
 GUILD_ID = 1377672440276058214
+GUEST_ROLE_ID = 1478317433683968041
+GUEST_ALERT_CHANNEL_ID = 1397124964246622238
 
 ROLE_IDS = [1482028706850537676, 1409209830152863845, 1409208539548876801]
 
 KST = timezone(timedelta(hours=9))
 DATA_FILE = "/data/attendance.json"
+GUEST_INTERVAL_DAYS = 7
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -28,23 +31,32 @@ tree = bot.tree
 # ===== 데이터 =====
 def load_data():
     if not os.path.exists(DATA_FILE):
-        data = {"users": {}, "today_order": {}}
+        initial_data = {
+            "users": {},
+            "today_order": {},
+            "guest_updates": {},
+            "meta": {}
+        }
         with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-        return data
+            json.dump(initial_data, f, indent=4, ensure_ascii=False)
+        return initial_data
 
     with open(DATA_FILE, "r", encoding="utf-8") as f:
-        data = json.load(f)
+        loaded = json.load(f)
 
-    data.setdefault("users", {})
-    data.setdefault("today_order", {})
-    return data
+    loaded.setdefault("users", {})
+    loaded.setdefault("today_order", {})
+    loaded.setdefault("guest_updates", {})
+    loaded.setdefault("meta", {})
+    return loaded
 
 
 def refresh_data():
-    global data, users
+    global data, users, guest_updates, meta
     data = load_data()
     users = data["users"]
+    guest_updates = data["guest_updates"]
+    meta = data["meta"]
     return data
 
 
@@ -55,6 +67,47 @@ def save_data():
 
 data = load_data()
 users = data["users"]
+guest_updates = data["guest_updates"]
+meta = data["meta"]
+
+
+def parse_date(date_str):
+    if not date_str:
+        return None
+
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def format_date(date_value):
+    return date_value.strftime("%Y-%m-%d")
+
+
+def ensure_guest_record(user_id, today=None):
+    if today is None:
+        today = datetime.now(KST).date()
+
+    record = guest_updates.setdefault(
+        user_id,
+        {
+            "last_refresh": "",
+            "next_due": format_date(today + timedelta(days=GUEST_INTERVAL_DAYS)),
+            "miss_count": 0,
+            "last_missed_due": "",
+            "last_pre_due_dm": "",
+            "last_due_dm": ""
+        }
+    )
+
+    record.setdefault("last_refresh", "")
+    record.setdefault("next_due", format_date(today + timedelta(days=GUEST_INTERVAL_DAYS)))
+    record.setdefault("miss_count", 0)
+    record.setdefault("last_missed_due", "")
+    record.setdefault("last_pre_due_dm", "")
+    record.setdefault("last_due_dm", "")
+    return record
 
 
 def get_ranking_periods(now):
@@ -95,9 +148,8 @@ def get_period_ranking(guild, period_key):
     position_scores = {uid: 0 for uid in eligible_members}
 
     for day_str, attendee_ids in data.get("today_order", {}).items():
-        try:
-            day = datetime.strptime(day_str, "%Y-%m-%d").date()
-        except ValueError:
+        day = parse_date(day_str)
+        if day is None:
             continue
 
         if start_date <= day <= end_date:
@@ -108,10 +160,9 @@ def get_period_ranking(guild, period_key):
 
     ranking_list = sorted(
         counts.items(),
-        key=lambda x: (-x[1], position_scores[x[0]], x[0])
+        key=lambda item: (-item[1], position_scores[item[0]], item[0])
     )
     return period_name, start_date, end_date, ranking_list
-
 
 
 def count_user_attendance_in_range(user_id, start_date, end_date):
@@ -119,15 +170,98 @@ def count_user_attendance_in_range(user_id, start_date, end_date):
     count = 0
 
     for day_str, attendee_ids in data.get("today_order", {}).items():
-        try:
-            day = datetime.strptime(day_str, "%Y-%m-%d").date()
-        except ValueError:
+        day = parse_date(day_str)
+        if day is None:
             continue
 
         if start_date <= day <= end_date and user_id in attendee_ids:
             count += 1
 
     return count
+
+
+async def send_safe_dm(member, content):
+    try:
+        await member.send(content)
+        return True
+    except (discord.Forbidden, discord.HTTPException):
+        return False
+
+
+async def run_guest_checks():
+    refresh_data()
+
+    guild = bot.get_guild(GUILD_ID)
+    if guild is None:
+        return
+
+    alert_channel = bot.get_channel(GUEST_ALERT_CHANNEL_ID)
+    today = datetime.now(KST).date()
+    today_str = format_date(today)
+
+    guest_members = [member for member in guild.members if any(role.id == GUEST_ROLE_ID for role in member.roles)]
+
+    changed = False
+    for member in guest_members:
+        record = ensure_guest_record(str(member.id), today=today)
+        next_due = parse_date(record["next_due"])
+        if next_due is None:
+            next_due = today + timedelta(days=GUEST_INTERVAL_DAYS)
+            record["next_due"] = format_date(next_due)
+            changed = True
+
+        if next_due - timedelta(days=1) == today and record["last_pre_due_dm"] != record["next_due"]:
+            sent = await send_safe_dm(
+                member,
+                f"안내드립니다. GUEST 갱신 기간이 하루 남았습니다.\n"
+                f"다음 갱신 마감일은 {record['next_due']} 입니다."
+            )
+            if sent:
+                record["last_pre_due_dm"] = record["next_due"]
+                changed = True
+
+        if next_due == today and record["last_due_dm"] != record["next_due"]:
+            sent = await send_safe_dm(
+                member,
+                f"안내드립니다. 오늘이 GUEST 갱신 마감일입니다.\n"
+                f"오늘 안에 갱신하기 버튼을 눌러 주세요. 마감일: {record['next_due']}"
+            )
+            if sent:
+                record["last_due_dm"] = record["next_due"]
+                changed = True
+
+        if next_due < today and record["last_missed_due"] != record["next_due"]:
+            record["miss_count"] += 1
+            current_miss_count = record["miss_count"]
+            missed_due = record["next_due"]
+            record["last_missed_due"] = missed_due
+
+            while next_due <= today:
+                next_due += timedelta(days=GUEST_INTERVAL_DAYS)
+
+            record["next_due"] = format_date(next_due)
+            record["last_pre_due_dm"] = ""
+            record["last_due_dm"] = ""
+            changed = True
+
+            if alert_channel is not None:
+                penalty_text = (
+                    "이번 미갱신은 1번째이므로 경고 대상입니다."
+                    if current_miss_count == 1
+                    else "이번 미갱신은 2번째 이상이므로 퇴장 패널티 대상입니다."
+                )
+                await alert_channel.send(
+                    f"<@{member.id}> 님이 기간 내 GUEST 갱신을 하지 못했습니다.\n"
+                    f"미갱신 기준일: {missed_due}\n"
+                    f"이번 미갱신은 {current_miss_count}번째입니다.\n"
+                    f"{penalty_text}"
+                )
+
+    meta["last_guest_check_date"] = today_str
+    changed = True
+
+    if changed:
+        save_data()
 
 
 # ===== 출석 버튼 =====
@@ -150,7 +284,7 @@ class AttendanceButton(discord.ui.Button):
         )
         self.date = date
 
-        today = datetime.now(KST).strftime("%Y-%m-%d")
+        today = format_date(datetime.now(KST).date())
         if self.date != today:
             self.disabled = True
 
@@ -193,14 +327,12 @@ class AttendanceButton(discord.ui.Button):
             }
 
         user = users[user_id]
-
         if user["last_attendance"] == today:
             await interaction.response.send_message("⚠ 이미 출석했습니다!", ephemeral=True)
             return
 
-        yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday = format_date((now - timedelta(days=1)).date())
         user["streak"] = user["streak"] + 1 if user["last_attendance"] == yesterday else 1
-
         user["last_attendance"] = today
         user["total"] += 1
         user["monthly"][month] = user["monthly"].get(month, 0) + 1
@@ -209,7 +341,6 @@ class AttendanceButton(discord.ui.Button):
         save_data()
 
         rank = today_list.index(user_id) + 1
-
         await interaction.response.send_message(
             f"✅ 출석 완료!\n\n"
             f"🏅 오늘 순위: {rank}등\n\n"
@@ -225,14 +356,62 @@ class AttendanceButton(discord.ui.Button):
 
         embed = discord.Embed(
             title=f"📅 {today} 출석하기",
-            description=(
-                f"{first_text}\n\n"
-                f"현재 출석 인원: {len(today_list)}명"
-            ),
+            description=f"{first_text}\n\n현재 출석 인원: {len(today_list)}명",
             color=0x00FFCC
         )
 
         await interaction.message.edit(embed=embed, view=DailyAttendanceView(today))
+
+
+# ===== 게스트 갱신 버튼 =====
+class GuestRefreshView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(GuestRefreshButton())
+
+
+class GuestRefreshButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="갱신하기",
+            style=discord.ButtonStyle.primary,
+            custom_id="guest_refresh_button"
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if not any(role.id == GUEST_ROLE_ID for role in interaction.user.roles):
+            await interaction.response.send_message(
+                "❌ GUEST 역할이 있는 인원만 사용할 수 있습니다.",
+                ephemeral=True
+            )
+            return
+
+        refresh_data()
+
+        today = datetime.now(KST).date()
+        today_str = format_date(today)
+        user_id = str(interaction.user.id)
+        record = ensure_guest_record(user_id, today=today)
+
+        if record["last_refresh"] == today_str:
+            await interaction.response.send_message(
+                f"⚠ 오늘은 이미 갱신했습니다.\n다음 갱신 마감일은 {record['next_due']} 입니다.",
+                ephemeral=True
+            )
+            return
+
+        next_due = today + timedelta(days=GUEST_INTERVAL_DAYS)
+        record["last_refresh"] = today_str
+        record["next_due"] = format_date(next_due)
+        record["last_pre_due_dm"] = ""
+        record["last_due_dm"] = ""
+        save_data()
+
+        await interaction.response.send_message(
+            f"✅ GUEST 기간 갱신이 완료되었습니다.\n"
+            f"다음 갱신 버튼은 {record['next_due']} 까지 눌러 주세요.",
+            ephemeral=True
+        )
 
 
 # ===== 이동 버튼 =====
@@ -268,10 +447,7 @@ class AttendanceRankingView(discord.ui.View):
         end = start + self.per_page
         chunk = ranking_list[start:end]
 
-        desc_lines = [
-            f"기간: {start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}",
-            ""
-        ]
+        desc_lines = [f"기간: {start_date} ~ {end_date}", ""]
 
         for i, (uid, count) in enumerate(chunk, start=start + 1):
             member = self.guild.get_member(int(uid))
@@ -343,6 +519,50 @@ class AttendanceRankingView(discord.ui.View):
         await interaction.response.send_message("❌ 기록 없음", ephemeral=True)
 
 
+class TodayAttendanceView(discord.ui.View):
+    def __init__(self, today_users, guild, per_page=10):
+        super().__init__(timeout=180)
+        self.today_users = today_users
+        self.guild = guild
+        self.per_page = per_page
+        self.page = 0
+        self.total_pages = max((len(today_users) - 1) // per_page + 1, 1)
+
+    def get_embed(self):
+        start = self.page * self.per_page
+        end = start + self.per_page
+        chunk = self.today_users[start:end]
+
+        desc_lines = []
+        for i, uid in enumerate(chunk, start=start + 1):
+            member = self.guild.get_member(int(uid))
+            name = member.display_name if member else f"ID:{uid}"
+            desc_lines.append(f"{i}등. {name}")
+
+        description = f"총 출석 인원: {len(self.today_users)}명\n\n" + "\n".join(desc_lines)
+        return discord.Embed(
+            title=f"📅 오늘 출석 현황 ({self.page + 1}/{self.total_pages})",
+            description=description,
+            color=0x00FFCC
+        )
+
+    @discord.ui.button(label="◀ 이전", style=discord.ButtonStyle.secondary)
+    async def prev(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.page > 0:
+            self.page -= 1
+            await interaction.response.edit_message(embed=self.get_embed(), view=self)
+        else:
+            await interaction.response.defer()
+
+    @discord.ui.button(label="다음 ▶", style=discord.ButtonStyle.secondary)
+    async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.page + 1 < self.total_pages:
+            self.page += 1
+            await interaction.response.edit_message(embed=self.get_embed(), view=self)
+        else:
+            await interaction.response.defer()
+
+
 # ===== 명령어 =====
 @tree.command(name="출석랭킹", description="출석 랭킹 보기")
 async def ranking(interaction: discord.Interaction):
@@ -379,8 +599,8 @@ async def check_attendance(interaction: discord.Interaction, member: discord.Mem
         if mon <= 0:
             year -= 1
             mon += 12
-        m_str = f"{year}-{mon:02d}"
-        last_6_months.append(f"{m_str} : {user.get('monthly', {}).get(m_str, 0)}일")
+        month_key = f"{year}-{mon:02d}"
+        last_6_months.append(f"{month_key} : {user.get('monthly', {}).get(month_key, 0)}일")
 
     embed = discord.Embed(
         title=f"📊 {member.display_name} 출석 기록",
@@ -392,60 +612,14 @@ async def check_attendance(interaction: discord.Interaction, member: discord.Mem
         ),
         color=0x00FFCC
     )
-
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-class TodayAttendanceView(discord.ui.View):
-    def __init__(self, today_users, guild, per_page=10):
-        super().__init__(timeout=180)
-        self.today_users = today_users
-        self.guild = guild
-        self.per_page = per_page
-        self.page = 0
-        self.total_pages = max((len(today_users) - 1) // per_page + 1, 1)
-
-    def get_embed(self):
-        start = self.page * self.per_page
-        end = start + self.per_page
-        chunk = self.today_users[start:end]
-
-        desc_lines = []
-        for i, uid in enumerate(chunk, start=start + 1):
-            member = self.guild.get_member(int(uid))
-            name = member.display_name if member else f"ID:{uid}"
-            desc_lines.append(f"{i}등. {name}")
-
-        description = f"총 출석 인원: {len(self.today_users)}명\n\n" + "\n".join(desc_lines)
-
-        return discord.Embed(
-            title=f"📅 오늘 출석 현황 ({self.page + 1}/{self.total_pages})",
-            description=description,
-            color=0x00FFCC
-        )
-
-    @discord.ui.button(label="◀ 이전", style=discord.ButtonStyle.secondary)
-    async def prev(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.page > 0:
-            self.page -= 1
-            await interaction.response.edit_message(embed=self.get_embed(), view=self)
-        else:
-            await interaction.response.defer()
-
-    @discord.ui.button(label="다음 ▶", style=discord.ButtonStyle.secondary)
-    async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.page + 1 < self.total_pages:
-            self.page += 1
-            await interaction.response.edit_message(embed=self.get_embed(), view=self)
-        else:
-            await interaction.response.defer()
-
-
-@tree.command(name="오늘출석")
+@tree.command(name="오늘출석", description="오늘 출석 현황 보기")
 async def today_attendance(interaction: discord.Interaction):
     refresh_data()
 
-    today = datetime.now(KST).strftime("%Y-%m-%d")
+    today = format_date(datetime.now(KST).date())
     today_users = data.get("today_order", {}).get(today, [])
 
     if not today_users:
@@ -456,15 +630,14 @@ async def today_attendance(interaction: discord.Interaction):
     await interaction.response.send_message(embed=view.get_embed(), view=view, ephemeral=True)
 
 
-@tree.command(name="출석생성", description="오늘 출석 버튼 생성 (관리자용)")
+@tree.command(name="출석생성", description="오늘 출석 버튼 생성")
+@app_commands.default_permissions(manage_guild=True)
 async def create_attendance(interaction: discord.Interaction):
     refresh_data()
 
-    today = datetime.now(KST).strftime("%Y-%m-%d")
-
-    if today not in data["today_order"]:
-        data["today_order"][today] = []
-        save_data()
+    today = format_date(datetime.now(KST).date())
+    data["today_order"].setdefault(today, [])
+    save_data()
 
     embed = discord.Embed(
         title=f"📅 {today} 출석하기",
@@ -474,27 +647,39 @@ async def create_attendance(interaction: discord.Interaction):
 
     channel = bot.get_channel(ATTENDANCE_CHANNEL_ID)
     await channel.send(embed=embed, view=DailyAttendanceView(today))
-
     await interaction.response.send_message("✅ 출석 버튼 생성 완료", ephemeral=True)
 
 
-# ===== 자정 =====
+@tree.command(name="게스트갱신생성", description="GUEST 갱신 버튼 생성")
+@app_commands.default_permissions(manage_guild=True)
+async def create_guest_refresh(interaction: discord.Interaction):
+    refresh_data()
+
+    embed = discord.Embed(
+        title="HICKS GUEST 기간 갱신!!",
+        description="GUEST 역할 보유 인원만 갱신하기 버튼을 누를 수 있습니다.\n주 1회 갱신이 필요합니다.",
+        color=0x5865F2
+    )
+
+    await interaction.channel.send(embed=embed, view=GuestRefreshView())
+    await interaction.response.send_message("✅ GUEST 갱신 버튼 생성 완료", ephemeral=True)
+
+
+# ===== 정기 작업 =====
 @tasks.loop(minutes=1)
 async def daily():
     refresh_data()
     now = datetime.now(KST)
 
     if now.hour == 0 and now.minute == 0:
-        today = now.strftime("%Y-%m-%d")
-
-        if today not in data["today_order"]:
-            data["today_order"][today] = []
-            save_data()
+        today = format_date(now.date())
+        data["today_order"].setdefault(today, [])
+        save_data()
 
         attendance_channel = bot.get_channel(ATTENDANCE_CHANNEL_ID)
         notice_channel = bot.get_channel(MIDNIGHT_CHANNEL_ID)
 
-        embed = discord.Embed(
+        attendance_embed = discord.Embed(
             title=f"📅 {today} 출석하기",
             description="🥇 1등: 없음\n\n현재 출석 인원: 0명",
             color=0x00FFCC
@@ -502,26 +687,26 @@ async def daily():
 
         await attendance_channel.send(
             content="@here",
-            embed=embed,
+            embed=attendance_embed,
             view=DailyAttendanceView(today),
             allowed_mentions=discord.AllowedMentions(everyone=True)
         )
 
-        embed = discord.Embed(
+        notice_embed = discord.Embed(
             title="🌙 출석 초기화 완료!",
-            description=(
-                "🔥 오늘의 1등은 누구??\n\n"
-                "지금 바로 출석하세요!!"
-            ),
+            description="🔥 오늘의 1등은 누구??\n\n지금 바로 출석하세요!!",
             color=0x5865F2
         )
 
         await notice_channel.send(
             content="@here",
-            embed=embed,
+            embed=notice_embed,
             view=MoveToAttendanceView(),
             allowed_mentions=discord.AllowedMentions(everyone=True)
         )
+
+    if now.hour >= 9 and meta.get("last_guest_check_date") != format_date(now.date()):
+        await run_guest_checks()
 
 
 # ===== 실행 =====
@@ -529,6 +714,7 @@ async def daily():
 async def on_ready():
     bot.add_view(DailyAttendanceView("dummy"))
     bot.add_view(MoveToAttendanceView())
+    bot.add_view(GuestRefreshView())
 
     guild = discord.Object(id=GUILD_ID)
     await tree.sync(guild=guild)
