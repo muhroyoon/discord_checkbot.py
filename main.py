@@ -13,12 +13,15 @@ MIDNIGHT_CHANNEL_ID = 1377672440783704219
 GUILD_ID = 1377672440276058214
 GUEST_ROLE_ID = 1478317433683968041
 GUEST_ALERT_CHANNEL_ID = 1397124964246622238
+GUEST_REFRESH_CHANNEL_ID = 1497216669276307567
 
 ROLE_IDS = [1482028706850537676, 1409209830152863845, 1409208539548876801]
 
 KST = timezone(timedelta(hours=9))
 DATA_FILE = "/data/attendance.json"
 GUEST_INTERVAL_DAYS = 7
+LEGACY_GUEST_CUTOFF_DATE = datetime(2026, 4, 24, tzinfo=KST).date()
+GUEST_REFRESH_URL = f"https://discord.com/channels/{GUILD_ID}/{GUEST_REFRESH_CHANNEL_ID}"
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -93,20 +96,43 @@ def ensure_guest_record(user_id, today=None):
         user_id,
         {
             "last_refresh": "",
-            "next_due": format_date(today + timedelta(days=GUEST_INTERVAL_DAYS)),
+            "next_due": "",
             "miss_count": 0,
             "last_missed_due": "",
             "last_pre_due_dm": "",
-            "last_due_dm": ""
+            "last_due_dm": "",
+            "is_legacy_guest": False
         }
     )
 
     record.setdefault("last_refresh", "")
-    record.setdefault("next_due", format_date(today + timedelta(days=GUEST_INTERVAL_DAYS)))
+    record.setdefault("next_due", "")
     record.setdefault("miss_count", 0)
     record.setdefault("last_missed_due", "")
     record.setdefault("last_pre_due_dm", "")
     record.setdefault("last_due_dm", "")
+    record.setdefault("is_legacy_guest", False)
+
+    if not record["next_due"]:
+        record["next_due"] = format_date(today + timedelta(days=GUEST_INTERVAL_DAYS))
+
+    return record
+
+
+def initialize_legacy_guest(member, today=None):
+    if today is None:
+        today = datetime.now(KST).date()
+
+    user_id = str(member.id)
+    record = ensure_guest_record(user_id, today=today)
+
+    if record.get("last_refresh"):
+        return record
+
+    if not record.get("is_legacy_guest"):
+        record["is_legacy_guest"] = True
+        record["next_due"] = format_date(today)
+
     return record
 
 
@@ -204,6 +230,11 @@ async def run_guest_checks():
     changed = False
     for member in guest_members:
         record = ensure_guest_record(str(member.id), today=today)
+
+        if today >= LEGACY_GUEST_CUTOFF_DATE and not record.get("last_refresh"):
+            record = initialize_legacy_guest(member, today=today)
+            changed = True
+
         next_due = parse_date(record["next_due"])
         if next_due is None:
             next_due = today + timedelta(days=GUEST_INTERVAL_DAYS)
@@ -214,7 +245,8 @@ async def run_guest_checks():
             sent = await send_safe_dm(
                 member,
                 f"안내드립니다. GUEST 갱신 기간이 하루 남았습니다.\n"
-                f"다음 갱신 마감일은 {record['next_due']} 입니다."
+                f"다음 갱신 마감일은 {record['next_due']} 입니다.\n"
+                f"갱신하러 가기: {GUEST_REFRESH_URL}"
             )
             if sent:
                 record["last_pre_due_dm"] = record["next_due"]
@@ -224,7 +256,8 @@ async def run_guest_checks():
             sent = await send_safe_dm(
                 member,
                 f"안내드립니다. 오늘이 GUEST 갱신 마감일입니다.\n"
-                f"오늘 안에 갱신하기 버튼을 눌러 주세요. 마감일: {record['next_due']}"
+                f"오늘 안에 갱신하기 버튼을 눌러 주세요. 마감일: {record['next_due']}\n"
+                f"갱신하러 가기: {GUEST_REFRESH_URL}"
             )
             if sent:
                 record["last_due_dm"] = record["next_due"]
@@ -405,11 +438,13 @@ class GuestRefreshButton(discord.ui.Button):
         record["next_due"] = format_date(next_due)
         record["last_pre_due_dm"] = ""
         record["last_due_dm"] = ""
+        record["is_legacy_guest"] = False
         save_data()
 
         await interaction.response.send_message(
             f"✅ GUEST 기간 갱신이 완료되었습니다.\n"
-            f"다음 갱신 버튼은 {record['next_due']} 까지 눌러 주세요.",
+            f"다음 갱신 버튼은 {record['next_due']} 까지 눌러 주세요.\n"
+            f"갱신 채널: {GUEST_REFRESH_URL}",
             ephemeral=True
         )
 
@@ -724,7 +759,6 @@ async def on_ready():
         daily.start()
 
     print("READY")
-
 
 
 bot.run(TOKEN)
