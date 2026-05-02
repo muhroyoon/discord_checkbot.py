@@ -21,6 +21,7 @@ KST = timezone(timedelta(hours=9))
 DATA_FILE = "/data/attendance.json"
 GUEST_INTERVAL_DAYS = 7
 LEGACY_GUEST_CUTOFF_DATE = datetime(2026, 4, 24, tzinfo=KST).date()
+LEGACY_GUEST_FIRST_DUE_DATE = LEGACY_GUEST_CUTOFF_DATE + timedelta(days=GUEST_INTERVAL_DAYS)
 GUEST_REFRESH_URL = f"https://discord.com/channels/{GUILD_ID}/{GUEST_REFRESH_CHANNEL_ID}"
 
 intents = discord.Intents.default()
@@ -119,19 +120,16 @@ def ensure_guest_record(user_id, today=None):
     return record
 
 
-def initialize_legacy_guest(member, today=None):
-    if today is None:
-        today = datetime.now(KST).date()
-
+def initialize_legacy_guest(member):
     user_id = str(member.id)
-    record = ensure_guest_record(user_id, today=today)
+    record = ensure_guest_record(user_id)
 
     if record.get("last_refresh"):
         return record
 
     if not record.get("is_legacy_guest"):
         record["is_legacy_guest"] = True
-        record["next_due"] = format_date(today)
+        record["next_due"] = format_date(LEGACY_GUEST_FIRST_DUE_DATE)
 
     return record
 
@@ -231,8 +229,8 @@ async def run_guest_checks():
     for member in guest_members:
         record = ensure_guest_record(str(member.id), today=today)
 
-        if today >= LEGACY_GUEST_CUTOFF_DATE and not record.get("last_refresh"):
-            record = initialize_legacy_guest(member, today=today)
+        if today >= LEGACY_GUEST_FIRST_DUE_DATE and not record.get("last_refresh"):
+            record = initialize_legacy_guest(member)
             changed = True
 
         next_due = parse_date(record["next_due"])
@@ -443,7 +441,7 @@ class GuestRefreshButton(discord.ui.Button):
 
         await interaction.response.send_message(
             f"✅ GUEST 기간 갱신이 완료되었습니다.\n"
-            f"다음 갱신 버튼은 {record['next_due']} 까지 눌러 주세요.\n"
+            f"다음 갱신 마감일은 {record['next_due']} 입니다.\n"
             f"갱신 채널: {GUEST_REFRESH_URL}",
             ephemeral=True
         )
@@ -552,6 +550,57 @@ class AttendanceRankingView(discord.ui.View):
                 return
 
         await interaction.response.send_message("❌ 기록 없음", ephemeral=True)
+
+
+class GuestCheckView(discord.ui.View):
+    def __init__(self, rows):
+        super().__init__(timeout=180)
+        self.rows = rows
+        self.page = 0
+        self.per_page = 10
+
+    def get_embed(self):
+        total_pages = max((len(self.rows) - 1) // self.per_page + 1, 1)
+        start = self.page * self.per_page
+        end = start + self.per_page
+        chunk = self.rows[start:end]
+
+        lines = []
+        for row in chunk:
+            last_refresh = row["last_refresh"] or "없음"
+            lines.append(
+                f"{row['name']}\n"
+                f"마지막 갱신일: {last_refresh}\n"
+                f"마감일: {row['next_due']}\n"
+                f"미갱신 누적: {row['miss_count']}회"
+            )
+
+        if not lines:
+            lines.append("기록 없음")
+
+        embed = discord.Embed(
+            title="GUEST 갱신 점검",
+            description="\n\n".join(lines),
+            color=0x5865F2
+        )
+        embed.set_footer(text=f"페이지 {self.page + 1}/{total_pages}")
+        return embed
+
+    @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
+    async def prev(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.page > 0:
+            self.page -= 1
+            await interaction.response.edit_message(embed=self.get_embed(), view=self)
+        else:
+            await interaction.response.defer()
+
+    @discord.ui.button(label="▶", style=discord.ButtonStyle.secondary)
+    async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if (self.page + 1) * self.per_page < len(self.rows):
+            self.page += 1
+            await interaction.response.edit_message(embed=self.get_embed(), view=self)
+        else:
+            await interaction.response.defer()
 
 
 class TodayAttendanceView(discord.ui.View):
@@ -698,6 +747,36 @@ async def create_guest_refresh(interaction: discord.Interaction):
 
     await interaction.channel.send(embed=embed, view=GuestRefreshView())
     await interaction.response.send_message("✅ GUEST 갱신 버튼 생성 완료", ephemeral=True)
+
+
+@tree.command(name="갱신점검", description="GUEST 역할 인원의 갱신 현황 확인")
+@app_commands.default_permissions(manage_guild=True)
+async def guest_check(interaction: discord.Interaction):
+    refresh_data()
+
+    guild = interaction.guild
+    guest_members = [member for member in guild.members if any(role.id == GUEST_ROLE_ID for role in member.roles)]
+
+    rows = []
+    for member in guest_members:
+        record = ensure_guest_record(str(member.id))
+        if datetime.now(KST).date() >= LEGACY_GUEST_FIRST_DUE_DATE and not record.get("last_refresh"):
+            record = initialize_legacy_guest(member)
+
+        rows.append(
+            {
+                "name": member.display_name,
+                "last_refresh": record.get("last_refresh", ""),
+                "next_due": record.get("next_due", "없음"),
+                "miss_count": record.get("miss_count", 0),
+            }
+        )
+
+    rows.sort(key=lambda row: (row["next_due"] if row["next_due"] else "9999-12-31", row["name"]))
+    save_data()
+
+    view = GuestCheckView(rows)
+    await interaction.response.send_message(embed=view.get_embed(), view=view, ephemeral=True)
 
 
 # ===== 정기 작업 =====
