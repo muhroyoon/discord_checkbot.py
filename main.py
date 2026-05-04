@@ -20,8 +20,8 @@ ROLE_IDS = [1482028706850537676, 1409209830152863845, 1409208539548876801]
 KST = timezone(timedelta(hours=9))
 DATA_FILE = "/data/attendance.json"
 GUEST_INTERVAL_DAYS = 7
-LEGACY_GUEST_CUTOFF_DATE = datetime(2026, 4, 24, tzinfo=KST).date()
-LEGACY_GUEST_FIRST_DUE_DATE = LEGACY_GUEST_CUTOFF_DATE + timedelta(days=GUEST_INTERVAL_DAYS)
+LEGACY_GUEST_BASE_DATE = datetime(2026, 5, 4, tzinfo=KST).date()
+LEGACY_GUEST_DUE_DATE = datetime(2026, 5, 11, tzinfo=KST).date()
 GUEST_REFRESH_URL = f"https://discord.com/channels/{GUILD_ID}/{GUEST_REFRESH_CHANNEL_ID}"
 
 intents = discord.Intents.default()
@@ -102,7 +102,8 @@ def ensure_guest_record(user_id, today=None):
             "last_missed_due": "",
             "last_pre_due_dm": "",
             "last_due_dm": "",
-            "is_legacy_guest": False
+            "guest_assigned_at": "",
+            "legacy_initialized": False
         }
     )
 
@@ -112,7 +113,8 @@ def ensure_guest_record(user_id, today=None):
     record.setdefault("last_missed_due", "")
     record.setdefault("last_pre_due_dm", "")
     record.setdefault("last_due_dm", "")
-    record.setdefault("is_legacy_guest", False)
+    record.setdefault("guest_assigned_at", "")
+    record.setdefault("legacy_initialized", False)
 
     if not record["next_due"]:
         record["next_due"] = format_date(today + timedelta(days=GUEST_INTERVAL_DAYS))
@@ -120,16 +122,33 @@ def ensure_guest_record(user_id, today=None):
     return record
 
 
-def initialize_legacy_guest(member):
-    user_id = str(member.id)
-    record = ensure_guest_record(user_id)
+def set_guest_due_from_assignment(record, assigned_date):
+    record["guest_assigned_at"] = format_date(assigned_date)
+    record["legacy_initialized"] = False
 
+    if not record.get("last_refresh"):
+        record["next_due"] = format_date(assigned_date + timedelta(days=GUEST_INTERVAL_DAYS))
+
+
+def initialize_legacy_guest(member):
+    record = ensure_guest_record(str(member.id))
     if record.get("last_refresh"):
         return record
 
-    if not record.get("is_legacy_guest"):
-        record["is_legacy_guest"] = True
-        record["next_due"] = format_date(LEGACY_GUEST_FIRST_DUE_DATE)
+    record["guest_assigned_at"] = format_date(LEGACY_GUEST_BASE_DATE)
+    record["next_due"] = format_date(LEGACY_GUEST_DUE_DATE)
+    record["legacy_initialized"] = True
+    return record
+
+
+def ensure_current_guest_has_record(member, today=None):
+    if today is None:
+        today = datetime.now(KST).date()
+
+    record = ensure_guest_record(str(member.id), today=today)
+
+    if not record.get("guest_assigned_at"):
+        set_guest_due_from_assignment(record, today)
 
     return record
 
@@ -225,19 +244,13 @@ async def run_guest_checks():
 
     guest_members = [member for member in guild.members if any(role.id == GUEST_ROLE_ID for role in member.roles)]
 
-    changed = False
     for member in guest_members:
-        record = ensure_guest_record(str(member.id), today=today)
-
-        if today >= LEGACY_GUEST_FIRST_DUE_DATE and not record.get("last_refresh"):
-            record = initialize_legacy_guest(member)
-            changed = True
+        record = ensure_current_guest_has_record(member, today=today)
 
         next_due = parse_date(record["next_due"])
         if next_due is None:
             next_due = today + timedelta(days=GUEST_INTERVAL_DAYS)
             record["next_due"] = format_date(next_due)
-            changed = True
 
         if next_due - timedelta(days=1) == today and record["last_pre_due_dm"] != record["next_due"]:
             sent = await send_safe_dm(
@@ -248,7 +261,6 @@ async def run_guest_checks():
             )
             if sent:
                 record["last_pre_due_dm"] = record["next_due"]
-                changed = True
 
         if next_due == today and record["last_due_dm"] != record["next_due"]:
             sent = await send_safe_dm(
@@ -259,7 +271,6 @@ async def run_guest_checks():
             )
             if sent:
                 record["last_due_dm"] = record["next_due"]
-                changed = True
 
         if next_due < today and record["last_missed_due"] != record["next_due"]:
             record["miss_count"] += 1
@@ -273,7 +284,6 @@ async def run_guest_checks():
             record["next_due"] = format_date(next_due)
             record["last_pre_due_dm"] = ""
             record["last_due_dm"] = ""
-            changed = True
 
             if alert_channel is not None:
                 penalty_text = (
@@ -289,10 +299,7 @@ async def run_guest_checks():
                 )
 
     meta["last_guest_check_date"] = today_str
-    changed = True
-
-    if changed:
-        save_data()
+    save_data()
 
 
 # ===== 출석 버튼 =====
@@ -436,7 +443,10 @@ class GuestRefreshButton(discord.ui.Button):
         record["next_due"] = format_date(next_due)
         record["last_pre_due_dm"] = ""
         record["last_due_dm"] = ""
-        record["is_legacy_guest"] = False
+
+        if not record.get("guest_assigned_at"):
+            record["guest_assigned_at"] = today_str
+
         save_data()
 
         await interaction.response.send_message(
@@ -568,8 +578,10 @@ class GuestCheckView(discord.ui.View):
         lines = []
         for row in chunk:
             last_refresh = row["last_refresh"] or "없음"
+            assigned_at = row["guest_assigned_at"] or "없음"
             lines.append(
                 f"{row['name']}\n"
+                f"GUEST 부여일: {assigned_at}\n"
                 f"마지막 갱신일: {last_refresh}\n"
                 f"마감일: {row['next_due']}\n"
                 f"미갱신 누적: {row['miss_count']}회"
@@ -759,13 +771,11 @@ async def guest_check(interaction: discord.Interaction):
 
     rows = []
     for member in guest_members:
-        record = ensure_guest_record(str(member.id))
-        if datetime.now(KST).date() >= LEGACY_GUEST_FIRST_DUE_DATE and not record.get("last_refresh"):
-            record = initialize_legacy_guest(member)
-
+        record = ensure_current_guest_has_record(member)
         rows.append(
             {
                 "name": member.display_name,
+                "guest_assigned_at": record.get("guest_assigned_at", ""),
                 "last_refresh": record.get("last_refresh", ""),
                 "next_due": record.get("next_due", "없음"),
                 "miss_count": record.get("miss_count", 0),
@@ -777,6 +787,34 @@ async def guest_check(interaction: discord.Interaction):
 
     view = GuestCheckView(rows)
     await interaction.response.send_message(embed=view.get_embed(), view=view, ephemeral=True)
+
+
+@tree.command(name="기존게스트초기화", description="현재 GUEST 인원을 5월 11일 마감으로 초기화")
+@app_commands.default_permissions(manage_guild=True)
+async def initialize_legacy_guests(interaction: discord.Interaction):
+    refresh_data()
+
+    guild = interaction.guild
+    guest_members = [member for member in guild.members if any(role.id == GUEST_ROLE_ID for role in member.roles)]
+
+    updated_count = 0
+    for member in guest_members:
+        record = ensure_guest_record(str(member.id))
+        if record.get("last_refresh"):
+            continue
+
+        initialize_legacy_guest(member)
+        updated_count += 1
+
+    meta["legacy_guest_initialized_at"] = format_date(datetime.now(KST).date())
+    save_data()
+
+    await interaction.response.send_message(
+        f"✅ 기존 게스트 초기화 완료\n"
+        f"대상 인원: {updated_count}명\n"
+        f"기준 마감일: {format_date(LEGACY_GUEST_DUE_DATE)}",
+        ephemeral=True
+    )
 
 
 # ===== 정기 작업 =====
@@ -823,7 +861,30 @@ async def daily():
         await run_guest_checks()
 
 
-# ===== 실행 =====
+# ===== 이벤트 =====
+@bot.event
+async def on_member_update(before: discord.Member, after: discord.Member):
+    before_has_guest = any(role.id == GUEST_ROLE_ID for role in before.roles)
+    after_has_guest = any(role.id == GUEST_ROLE_ID for role in after.roles)
+
+    if not before_has_guest and after_has_guest:
+        refresh_data()
+        today = datetime.now(KST).date()
+        record = ensure_guest_record(str(after.id), today=today)
+
+        if not record.get("last_refresh"):
+            set_guest_due_from_assignment(record, today)
+            record["last_pre_due_dm"] = ""
+            record["last_due_dm"] = ""
+            save_data()
+
+    if before_has_guest and not after_has_guest:
+        refresh_data()
+        record = ensure_guest_record(str(after.id))
+        record["legacy_initialized"] = False
+        save_data()
+
+
 @bot.event
 async def on_ready():
     bot.add_view(DailyAttendanceView("dummy"))
